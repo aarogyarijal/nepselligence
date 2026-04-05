@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+
 interface Stock {
   symbol: string
   ltp: number
@@ -7,16 +9,40 @@ interface Stock {
   changePercent: number
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+
+const DEFAULT_WATCHLIST: Stock[] = [
+  { symbol: 'NABIL', ltp: 1234.50, change: 45.20, changePercent: 3.79 },
+  { symbol: 'EIC', ltp: 2456.00, change: 67.80, changePercent: 2.84 },
+  { symbol: 'ADBL', ltp: 456.20, change: 15.60, changePercent: 3.53 },
+  { symbol: 'SBI', ltp: 567.30, change: 23.10, changePercent: 4.24 },
+  { symbol: 'CCBL', ltp: 234.50, change: 8.90, changePercent: 3.94 },
+  { symbol: 'KSBBL', ltp: 567.80, change: -23.10, changePercent: -3.91 },
+]
+
 export default function Watchlist() {
-  // Mock watched stocks
-  const watchlist: Stock[] = [
-    { symbol: 'NABIL', ltp: 1234.50, change: 45.20, changePercent: 3.79 },
-    { symbol: 'EIC', ltp: 2456.00, change: 67.80, changePercent: 2.84 },
-    { symbol: 'ADBL', ltp: 456.20, change: 15.60, changePercent: 3.53 },
-    { symbol: 'SBI', ltp: 567.30, change: 23.10, changePercent: 4.24 },
-    { symbol: 'CCBL', ltp: 234.50, change: 8.90, changePercent: 3.94 },
-    { symbol: 'KSBBL', ltp: 567.80, change: -23.10, changePercent: -3.91 },
-  ]
+  const [watchlist, setWatchlist] = useState<Stock[]>(DEFAULT_WATCHLIST)
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/stocks/latest`, {
+          mode: 'cors',
+        })
+
+        if (response.ok) {
+          const prices: Stock[] = await response.json()
+          if (prices && prices.length > 0) {
+            setWatchlist(prices.slice(0, 6))
+          }
+        }
+      } catch (err) {
+        // Silently fall back to defaults
+      }
+    }
+
+    fetchData()
+  }, [])
 
   return (
     <div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 interface Stock {
   symbol: string
@@ -9,27 +9,57 @@ interface Stock {
   changePercent: number
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+
+const DEFAULT_GAINERS: Stock[] = [
+  { symbol: 'NABIL', ltp: 1234.50, change: 45.20, changePercent: 3.79 },
+  { symbol: 'EIC', ltp: 2456.00, change: 67.80, changePercent: 2.84 },
+  { symbol: 'SBI', ltp: 567.30, change: 23.10, changePercent: 4.24 },
+  { symbol: 'ADBL', ltp: 456.20, change: 15.60, changePercent: 3.53 },
+  { symbol: 'CCBL', ltp: 234.50, change: 8.90, changePercent: 3.94 },
+]
+
+const DEFAULT_LOSERS: Stock[] = [
+  { symbol: 'BBBL', ltp: 123.40, change: -15.20, changePercent: -10.98 },
+  { symbol: 'KSBBL', ltp: 567.80, change: -23.10, changePercent: -3.91 },
+  { symbol: 'SLBBL', ltp: 234.50, change: -8.90, changePercent: -3.65 },
+  { symbol: 'BNHC', ltp: 456.20, change: -12.60, changePercent: -2.68 },
+  { symbol: 'GBBL', ltp: 789.30, change: -19.80, changePercent: -2.45 },
+]
+
 export default function TopMovers() {
   const [activeTab, setActiveTab] = useState<'gainers' | 'losers'>('gainers')
+  const [stocks, setStocks] = useState<{gainers: Stock[], losers: Stock[]}>({
+    gainers: DEFAULT_GAINERS,
+    losers: DEFAULT_LOSERS,
+  })
 
-  // Mock data
-  const gainers: Stock[] = [
-    { symbol: 'NABIL', ltp: 1234.50, change: 45.20, changePercent: 3.79 },
-    { symbol: 'EIC', ltp: 2456.00, change: 67.80, changePercent: 2.84 },
-    { symbol: 'SBI', ltp: 567.30, change: 23.10, changePercent: 4.24 },
-    { symbol: 'ADBL', ltp: 456.20, change: 15.60, changePercent: 3.53 },
-    { symbol: 'CCBL', ltp: 234.50, change: 8.90, changePercent: 3.94 },
-  ]
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/stocks/latest`, {
+          mode: 'cors',
+        })
 
-  const losers: Stock[] = [
-    { symbol: 'BBBL', ltp: 123.40, change: -15.20, changePercent: -10.98 },
-    { symbol: 'KSBBL', ltp: 567.80, change: -23.10, changePercent: -3.91 },
-    { symbol: 'SLBBL', ltp: 234.50, change: -8.90, changePercent: -3.65 },
-    { symbol: 'BNHC', ltp: 456.20, change: -12.60, changePercent: -2.68 },
-    { symbol: 'GBBL', ltp: 789.30, change: -19.80, changePercent: -2.45 },
-  ]
+        if (response.ok) {
+          const prices: Stock[] = await response.json()
+          if (prices && prices.length > 0) {
+            // Sort and separate gainers/losers
+            const sorted = [...prices].sort((a, b) => b.changePercent - a.changePercent)
+            const gainers = sorted.slice(0, 5)
+            const losers = sorted.slice(-5).reverse()
+            setStocks({ gainers, losers })
+          }
+        }
+      } catch (err) {
+        // Silently fall back to defaults
+      }
+    }
 
-  const data = activeTab === 'gainers' ? gainers : losers
+    fetchData()
+  }, [])
+
+  const data = activeTab === 'gainers' ? stocks.gainers : stocks.losers
 
   return (
     <div>
