@@ -47,8 +47,8 @@ class Floorsheet(Base):
     time = Column(DateTime(timezone=True), nullable=False, index=True)
 
     __table_args__ = (
-        Index("idx_symbol_time", "symbol", "time"),
-        Index("idx_time_retention", "time"),
+        Index("idx_floorsheet_symbol_time", "symbol", "time"),
+        Index("idx_floorsheet_time", "time"),
     )
 
 
