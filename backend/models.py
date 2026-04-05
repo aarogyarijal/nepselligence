@@ -28,7 +28,7 @@ class StockPrice(Base):
 
     __table_args__ = (
         UniqueConstraint("time", "symbol", name="uq_price_time_symbol"),
-        Index("idx_symbol_time_desc", "symbol", "time.desc"),
+        Index("idx_symbol_time", "symbol", "time"),
     )
 
 
@@ -47,7 +47,7 @@ class Floorsheet(Base):
     time = Column(DateTime(timezone=True), nullable=False, index=True)
 
     __table_args__ = (
-        Index("idx_symbol_time_desc", "symbol", "time.desc"),
+        Index("idx_symbol_time", "symbol", "time"),
         Index("idx_time_retention", "time"),
     )
 
@@ -72,4 +72,4 @@ class AIInsight(Base):
     generated_at = Column(DateTime(timezone=True), nullable=False, index=True)
     insight_text = Column(String(2000), nullable=False)
     symbol = Column(String(20))  # Null if market-wide insight
-    metadata = Column(JSONB)  # Any extra structured data
+    extra_data = Column(JSONB)  # Any extra structured data
