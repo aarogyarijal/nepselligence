@@ -11,15 +11,15 @@ type TimeRange = '1D' | '5D' | '1M' | '3M'
 
 export default function Dashboard() {
   const [timeRange, setTimeRange] = useState<TimeRange>('1D')
-  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     // Verify backend connectivity on mount
     fetch('http://localhost:8080/health', {
       mode: 'no-cors',
     })
-      .then(() => setLoading(false))
-      .catch(() => setLoading(false))
+      .catch(() => {
+        // Log connection errors silently for MVP
+      })
   }, [])
 
   return (
