@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:16-alpine
+    container_name: nepselligence-postgres
+    environment:
+      POSTGRES_USER: nepselligence
+      POSTGRES_PASSWORD: nepselligence
+      POSTGRES_DB: nepselligence
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nepselligence"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nepselligence
+
+  # NepseAPI-Unofficial (self-hosted market data)
+  nepseapi:
+    image: surajrimal/nepseapi:latest
+    container_name: nepselligence-nepseapi
+    ports:
+      - "8000:8000"  # REST API
+      - "5555:5555"  # WebSocket
+      - "9000:9000"  # MCP server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nepselligence
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Backend scheduler + API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: nepselligence-backend
+    environment:
+      DATABASE_URL: postgresql://nepselligence:nepselligence@postgres:5432/nepselligence
+      NEPSE_API_URL: http://nepseapi:8000
+      SCHEDULER_TIMEZONE: Asia/Kathmandu
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nepseapi:
+        condition: service_healthy
+    networks:
+      - nepselligence
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  nepselligence:
+    driver: bridge
