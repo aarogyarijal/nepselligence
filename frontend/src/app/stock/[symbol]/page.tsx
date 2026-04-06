@@ -86,14 +86,17 @@ export default function StockPage() {
           <StockChartPanel symbol={symbol} />
         </div>
 
-        {/* Row 1: [Signals + Returns stacked] | Technicals */}
-        <div className="grid grid-cols-12 gap-6 items-start">
-          <div className="col-span-4 flex flex-col gap-6">
+        {/* Row 1: News | Technicals | Signals + Returns — equal thirds, equal height */}
+        <div className="grid grid-cols-3 gap-6 items-stretch">
+          <div className="flex flex-col">
+            <StockNewsCard symbol={symbol} />
+          </div>
+          <div className="flex flex-col">
+            <TechnicalsCard technicals={analysis.technicals} />
+          </div>
+          <div className="flex flex-col gap-6">
             <SignalsCard signals={analysis.signals} />
             <ReturnsCard returns={analysis.returns} />
-          </div>
-          <div className="col-span-8">
-            <TechnicalsCard technicals={analysis.technicals} />
           </div>
         </div>
 
@@ -106,9 +109,6 @@ export default function StockPage() {
 
         {/* Row 3: AI Analysis + Chat */}
         <StockAIPanel symbol={symbol} />
-
-        {/* Row 3.5: Stock News */}
-        <StockNewsCard symbol={symbol} />
 
         {/* Row 4: Floorsheet (conditional) */}
         {analysis.floorsheet && (

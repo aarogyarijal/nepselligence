@@ -49,31 +49,29 @@ export default function StockNewsCard({ symbol }: StockNewsCardProps) {
   // Poll every 10 min for stock-specific news (less urgent than market feed)
   usePolling(load, 10 * 60_000, true)
 
-  if (!loading && articles.length === 0) {
-    return null
-  }
-
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+    <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden h-full flex flex-col">
       <div className="px-5 py-3 border-b border-slate-700">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
           News — {symbol}
         </h2>
       </div>
 
-      {loading ? (
-        <div className="p-5 space-y-4 animate-pulse">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="space-y-2">
-              <div className="h-3 bg-slate-700 rounded w-20" />
-              <div className="h-4 bg-slate-700 rounded w-full" />
-              <div className="h-3 bg-slate-700 rounded w-3/4" />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="divide-y divide-slate-800">
-          {articles.map(article => {
+      <div className="flex-1 overflow-y-auto divide-y divide-slate-800">
+        {loading ? (
+          <div className="p-5 space-y-4 animate-pulse">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="space-y-2">
+                <div className="h-3 bg-slate-700 rounded w-20" />
+                <div className="h-4 bg-slate-700 rounded w-full" />
+                <div className="h-3 bg-slate-700 rounded w-3/4" />
+              </div>
+            ))}
+          </div>
+        ) : articles.length === 0 ? (
+          <p className="px-5 py-6 text-xs text-slate-600">No recent news for {symbol}.</p>
+        ) : (
+          articles.map(article => {
             const categoryClass = CATEGORY_COLORS[article.category] ?? CATEGORY_COLORS.general
             return (
               <div key={article.id} className="px-5 py-4 hover:bg-slate-800/40 transition-colors">
@@ -100,9 +98,9 @@ export default function StockNewsCard({ symbol }: StockNewsCardProps) {
                 )}
               </div>
             )
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
     </div>
   )
 }
