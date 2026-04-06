@@ -1,0 +1,78 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e6]: CLOSED
+      - generic [ref=e8]:
+        - generic [ref=e9]: NEPSE
+        - generic [ref=e10]: 2,676.68
+        - generic [ref=e11]: ▼ -105.50 (-3.79%)
+      - generic [ref=e12]:
+        - generic [ref=e13]: "Turnover: Rs 1238.09 Cr"
+        - generic [ref=e14]: "Trades: 141,036"
+        - generic [ref=e15]: "Shares: 31.2M"
+      - textbox "Search stock symbol" [ref=e17]:
+        - /placeholder: Search symbol...
+    - main [ref=e18]:
+      - generic [ref=e19]:
+        - region "NEPSE Index" [ref=e21]:
+          - heading "NEPSE Index" [level=2] [ref=e22]
+          - generic [ref=e24]:
+            - generic [ref=e25]:
+              - generic [ref=e117]:
+                - generic [ref=e118]: 2,676.68
+                - generic [ref=e119]: 1 snapshot — ingesting more during market hours
+              - generic [ref=e26]:
+                - button "1D" [ref=e27] [cursor=pointer]
+                - button "5D" [ref=e28] [cursor=pointer]
+                - button "1M" [ref=e29] [cursor=pointer]
+                - button "3M" [ref=e30] [cursor=pointer]
+                - button "1Y" [ref=e31] [cursor=pointer]
+            - img [ref=e122]:
+              - generic [ref=e129]: 15:23
+              - generic [ref=e131]:
+                - generic [ref=e133]: "2676"
+                - generic [ref=e135]: "2676"
+                - generic [ref=e137]: "2677"
+                - generic [ref=e139]: "2677"
+                - generic [ref=e141]: "2678"
+        - region "Sector Performance" [ref=e34]:
+          - heading "Sector Performance" [level=2] [ref=e35]
+          - paragraph [ref=e148]: No sector data
+      - generic [ref=e45]:
+        - region "Top Gainers" [ref=e47]:
+          - heading "Top Gainers" [level=2] [ref=e48]
+          - generic [ref=e49]:
+            - generic [ref=e50]:
+              - generic [ref=e51]: "#"
+              - generic [ref=e52]: Symbol
+              - generic [ref=e53]: LTP
+              - generic [ref=e54]: "%"
+            - paragraph [ref=e149]: No gainer data
+        - region "Top Losers" [ref=e65]:
+          - heading "Top Losers" [level=2] [ref=e66]
+          - generic [ref=e67]:
+            - generic [ref=e68]:
+              - generic [ref=e69]: "#"
+              - generic [ref=e70]: Symbol
+              - generic [ref=e71]: LTP
+              - generic [ref=e72]: "%"
+            - paragraph [ref=e150]: No loser data
+        - region "Turnover Leaders" [ref=e83]:
+          - heading "Turnover Leaders" [level=2] [ref=e84]
+          - paragraph [ref=e151]: No turnover data
+      - generic [ref=e92]:
+        - region "Market Breadth" [ref=e94]:
+          - heading "Market Breadth" [level=2] [ref=e95]
+          - paragraph [ref=e152]: No breadth data
+        - generic [ref=e101]:
+          - generic [ref=e103]:
+            - heading "AI Insights" [level=2] [ref=e104]
+            - generic [ref=e105]: Claude
+          - paragraph [ref=e153]: No insights yet. Generate one from Admin controls.
+    - button "⚙ Admin 13,200 prices · 1 index rows · 0 insights ▼" [ref=e154] [cursor=pointer]:
+      - generic [ref=e113]:
+        - generic [ref=e114]: ⚙ Admin
+        - generic [ref=e155]: 13,200 prices · 1 index rows · 0 insights
+      - generic [ref=e115]: ▼
+  - alert [ref=e116]
+  - generic [ref=e156]: "2676"

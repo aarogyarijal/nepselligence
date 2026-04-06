@@ -1,12 +1,6 @@
 import type { StockAnalysis } from '@/types/market'
-
-function fmt(n: number | null | undefined, decimals = 0) {
-  if (n == null) return '—'
-  if (n >= 10_000_000) return `${(n / 10_000_000).toFixed(2)} Cr`
-  if (n >= 100_000) return `${(n / 100_000).toFixed(2)} L`
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
-  return n.toLocaleString('en-NP', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-}
+import { TipLabel } from '@/components/Tooltip'
+import { formatVolume } from '@/lib/format'
 
 export default function VolumeCard({ volume }: { volume: StockAnalysis['volume'] }) {
   const { latest, avg20d, avg90d, volumeRatio, avgTurnover20d } = volume
@@ -30,8 +24,12 @@ export default function VolumeCard({ volume }: { volume: StockAnalysis['volume']
       <div className="space-y-3.5">
         <div>
           <div className="flex justify-between items-center mb-1">
-            <span className="text-xs text-slate-500">Today</span>
-            <span className="text-sm text-slate-200">{fmt(latest)}</span>
+            <TipLabel
+              label="Today"
+              tip="Total number of shares traded today. The bar shows today's volume relative to the 20-day average (bar full = 100% of average)."
+              className="text-xs text-slate-500 border-slate-600"
+            />
+            <span className="text-sm text-slate-200">{formatVolume(latest)}</span>
           </div>
           {latestPct != null && (
             <div className="h-1.5 bg-slate-700 rounded-full">
@@ -45,8 +43,12 @@ export default function VolumeCard({ volume }: { volume: StockAnalysis['volume']
 
         <div>
           <div className="flex justify-between items-center mb-1">
-            <span className="text-xs text-slate-500">20D Avg</span>
-            <span className="text-sm text-slate-200">{fmt(avg20d)}</span>
+            <TipLabel
+              label="20D Avg"
+              tip="Average daily trading volume over the past 20 trading sessions (~1 calendar month). Used as the baseline for the volume ratio. The bar shows 20D avg relative to the 90D avg."
+              className="text-xs text-slate-500 border-slate-600"
+            />
+            <span className="text-sm text-slate-200">{formatVolume(avg20d)}</span>
           </div>
           {avg20Pct != null && (
             <div className="h-1.5 bg-slate-700 rounded-full">
@@ -59,20 +61,39 @@ export default function VolumeCard({ volume }: { volume: StockAnalysis['volume']
         </div>
 
         <div className="flex justify-between items-center">
-          <span className="text-xs text-slate-500">90D Avg</span>
-          <span className="text-sm text-slate-200">{fmt(avg90d)}</span>
+          <TipLabel
+            label="90D Avg"
+            tip="Average daily trading volume over the past 90 trading sessions (~4 calendar months). Represents the medium-term baseline for participation in this stock."
+            className="text-xs text-slate-500 border-slate-600"
+          />
+          <span className="text-sm text-slate-200">{formatVolume(avg90d)}</span>
         </div>
 
         <div className="border-t border-slate-800 pt-3">
           <div className="flex justify-between items-center">
-            <span className="text-xs text-slate-500">Volume Ratio</span>
+            <TipLabel
+              label="Volume Ratio"
+              tip={
+                <span>
+                  Today&apos;s volume ÷ 20-day average volume.<br /><br />
+                  <b className="text-green-400">&gt;1.5×</b>: unusually high activity (breakout or news)<br />
+                  <b className="text-yellow-400">0.7–1.5×</b>: normal range<br />
+                  <b className="text-red-400">&lt;0.7×</b>: low interest, thin market
+                </span>
+              }
+              className="text-xs text-slate-500 border-slate-600"
+            />
             <span className={`text-sm font-semibold ${ratioColor}`}>
-              {volumeRatio != null ? `${volumeRatio.toFixed(2)}x` : '—'}
+              {volumeRatio != null ? `${volumeRatio.toFixed(2)}×` : '—'}
             </span>
           </div>
           <div className="flex justify-between items-center mt-2">
-            <span className="text-xs text-slate-500">Avg Turnover (20D)</span>
-            <span className="text-sm text-slate-200">Rs {fmt(avgTurnover20d)}</span>
+            <TipLabel
+              label="Avg Turnover (20D)"
+              tip="Average daily rupee turnover (total value of shares traded) over the past 20 sessions. Calculated as average of (volume × price) per day. Higher turnover = more liquid stock."
+              className="text-xs text-slate-500 border-slate-600"
+            />
+            <span className="text-sm text-slate-200">Rs {formatVolume(avgTurnover20d)}</span>
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { fetchStockAnalysis } from '@/lib/api'
 import type { StockAnalysis } from '@/types/market'
@@ -62,13 +62,13 @@ export default function StockPage() {
     )
   }
 
-  const overlays: ChartOverlay[] = [
+  const overlays = useMemo<ChartOverlay[]>(() => [
     { label: 'SMA 20', data: analysis.overlays.sma20, color: '#facc15' },
     { label: 'SMA 50', data: analysis.overlays.sma50, color: '#f97316' },
     { label: 'SMA 200', data: analysis.overlays.sma200, color: '#a855f7' },
     { label: 'BB Upper', data: analysis.overlays.bollingerUpper, color: '#64748b', dashed: true },
     { label: 'BB Lower', data: analysis.overlays.bollingerLower, color: '#64748b', dashed: true },
-  ].filter(o => o.data.length > 0)
+  ].filter(o => o.data.length > 0), [analysis.overlays])
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col">

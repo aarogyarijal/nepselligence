@@ -68,3 +68,9 @@ export function changeArrow(value: number | null | undefined): string {
   if (value < 0) return '▼'
   return '▬'
 }
+
+/** Format a raw ratio as a percentage (no +/- sign). E.g. 0.025 → "2.50%". */
+export function formatPct(value: number | null | undefined, decimals = 2): string {
+  if (value == null) return '—'
+  return `${(value * 100).toFixed(decimals)}%`
+}

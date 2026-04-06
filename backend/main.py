@@ -901,7 +901,8 @@ async def get_stock_analysis(symbol: str):
         )
 
         # --- 52W metrics ---
-        cutoff_1y = datetime.now(timezone.utc) - timedelta(days=365)
+        now = datetime.now(timezone.utc)
+        cutoff_1y = now - timedelta(days=365)
         rows_1y = [r for r in rows if r.time >= cutoff_1y]
         closes_1y = [r.ltp for r in rows_1y]
         highs_1y  = [r.high or r.ltp for r in rows_1y]
@@ -947,7 +948,7 @@ async def get_stock_analysis(symbol: str):
         avg_range20d = round(sum(ranges20d) / len(ranges20d), 2) if ranges20d else None
 
         # --- Relative performance vs NEPSE ---
-        cutoff_30d = datetime.now(timezone.utc) - timedelta(days=45)
+        cutoff_30d = now - timedelta(days=45)
         nepse_rows = db.query(MarketSummary).filter(
             MarketSummary.time >= cutoff_30d
         ).order_by(MarketSummary.time.asc()).all()

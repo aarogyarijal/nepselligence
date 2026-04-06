@@ -1,0 +1,153 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - button "← Dashboard" [ref=e4] [cursor=pointer]
+      - generic [ref=e5]: NEPSE · NABIL
+    - main [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - generic [ref=e10]:
+            - heading "NABIL" [level=1] [ref=e11]
+            - generic [ref=e12]: Banks
+          - generic [ref=e13]:
+            - generic [ref=e16]: Rs 517.50
+            - generic [ref=e17]:
+              - text: ▼
+              - generic [ref=e19]: 5.50 (-1.05%)
+            - generic [ref=e22]: "Prev close: Rs 523.00"
+        - generic [ref=e23]:
+          - generic [ref=e24]:
+            - generic [ref=e26]: "52W Low: Rs 471.00"
+            - generic [ref=e28]: 52-Week Range
+            - generic [ref=e30]: "52W High: Rs 562.00"
+          - generic [ref=e36]: "ATH: Rs 562.00"
+      - generic [ref=e37]:
+        - generic [ref=e38]:
+          - heading "Price Chart" [level=2] [ref=e39]
+          - generic [ref=e40]:
+            - generic [ref=e41]: SMA 20
+            - generic [ref=e43]: SMA 50
+            - generic [ref=e45]: SMA 200
+            - generic [ref=e47]: BB
+        - table [ref=e51]:
+          - row [ref=e52]:
+            - cell
+            - cell [ref=e53]:
+              - link "Charting by TradingView" [ref=e57] [cursor=pointer]:
+                - /url: https://www.tradingview.com/?utm_medium=lwc-link&utm_campaign=lwc-chart&utm_source=localhost/stock/NABIL
+                - img [ref=e58]
+            - cell
+          - row [ref=e62]:
+            - cell
+            - cell [ref=e63]
+            - cell
+      - generic [ref=e67]:
+        - generic [ref=e69]:
+          - heading "Signals" [level=2] [ref=e70]
+          - generic [ref=e71]:
+            - generic [ref=e72]:
+              - generic [ref=e75]: Trend
+              - generic [ref=e77]: Neutral
+            - generic [ref=e79]:
+              - generic [ref=e82]: Momentum
+              - generic [ref=e84]: Neutral
+            - generic [ref=e86]:
+              - generic [ref=e89]: Volume
+              - generic [ref=e91]: → Stable
+            - generic [ref=e92]:
+              - generic [ref=e95]: vs SMA
+              - generic [ref=e96]: Above All
+        - generic [ref=e98]:
+          - heading "Returns" [level=2] [ref=e99]:
+            - generic [ref=e101]: Returns
+          - generic [ref=e102]:
+            - generic [ref=e103]:
+              - generic [ref=e105]: 1 Day
+              - generic [ref=e106]: "-1.05%"
+            - generic [ref=e107]:
+              - generic [ref=e109]: 5 Days
+              - generic [ref=e110]: "-4.70%"
+            - generic [ref=e111]:
+              - generic [ref=e113]: 1 Month
+              - generic [ref=e114]: +4.33%
+            - generic [ref=e115]:
+              - generic [ref=e117]: 3 Months
+              - generic [ref=e118]: +5.18%
+            - generic [ref=e119]:
+              - generic [ref=e121]: 6 Months
+              - generic [ref=e122]: "-1.21%"
+            - generic [ref=e123]:
+              - generic [ref=e125]: 1 Year
+              - generic [ref=e126]: —
+        - generic [ref=e128]:
+          - heading "Technicals" [level=2] [ref=e129]
+          - generic [ref=e130]:
+            - generic [ref=e131]:
+              - generic [ref=e132]:
+                - generic [ref=e134]: RSI (14)
+                - generic [ref=e135]: Neutral
+              - generic [ref=e141]: "46.1"
+            - generic [ref=e143]:
+              - generic [ref=e146]: MACD
+              - generic [ref=e148]: "5.50 / 8.32 H: -2.82"
+            - generic [ref=e149]:
+              - generic [ref=e152]: ATR (14)
+              - generic [ref=e153]: Rs 11.07
+            - generic [ref=e155]:
+              - generic [ref=e158]: Bollinger
+              - generic [ref=e160]: 505.44 | 529.83 | 554.22
+            - generic [ref=e162]:
+              - generic [ref=e165]: SMA 20
+              - generic [ref=e167]: Rs 529.83
+            - generic [ref=e168]:
+              - generic [ref=e171]: SMA 50
+              - generic [ref=e173]: Rs 509.00
+            - generic [ref=e174]:
+              - generic [ref=e177]: SMA 200
+              - generic [ref=e179]: Rs 508.43
+            - generic [ref=e180]:
+              - generic [ref=e183]: EMA 12
+              - generic [ref=e184]: Rs 528.75
+            - generic [ref=e185]:
+              - generic [ref=e188]: EMA 26
+              - generic [ref=e189]: Rs 523.25
+      - generic [ref=e190]:
+        - generic [ref=e192]:
+          - heading "Volume" [level=2] [ref=e193]
+          - generic [ref=e194]:
+            - generic [ref=e196]:
+              - generic [ref=e198]: Today
+              - generic [ref=e199]: 83.1K
+            - generic [ref=e203]:
+              - generic [ref=e205]: 20D Avg
+              - generic [ref=e206]: 99.8K
+            - generic [ref=e209]:
+              - generic [ref=e211]: 90D Avg
+              - generic [ref=e212]: 62.6K
+            - generic [ref=e213]:
+              - generic [ref=e214]:
+                - generic [ref=e216]: Volume Ratio
+                - generic [ref=e217]: 0.83×
+              - generic [ref=e218]:
+                - generic [ref=e220]: Avg Turnover (20D)
+                - generic [ref=e221]: Rs 5.32 Cr
+        - generic [ref=e223]:
+          - heading "Volatility" [level=2] [ref=e224]:
+            - generic [ref=e226]: Volatility
+          - generic [ref=e227]:
+            - generic [ref=e228]:
+              - generic [ref=e230]: Daily (30D)
+              - generic [ref=e231]: 1.74%
+            - generic [ref=e232]:
+              - generic [ref=e234]: Annualized (30D)
+              - generic [ref=e235]:
+                - generic [ref=e236]: 25.76%
+                - generic [ref=e237]: Medium
+            - generic [ref=e239]:
+              - generic [ref=e241]: Avg Daily Range (20D)
+              - generic [ref=e242]: Rs 12.53
+        - generic [ref=e244]:
+          - heading "vs NEPSE (30D)" [level=2] [ref=e245]:
+            - generic [ref=e247]: vs NEPSE (30D)
+          - paragraph [ref=e248]: Insufficient NEPSE index data
+  - alert [ref=e249]
