@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { MarketStatusCtx } from '@/hooks/useMarketStatus'
 import MarketStatusBar from '@/components/MarketStatusBar'
@@ -44,15 +44,15 @@ export default function Dashboard() {
   useEffect(() => { loadMarketStatus() }, [])
   usePolling(loadMarketStatus, 60_000, true)
 
-  const handleRangeChange = (r: TimeRange) => {
+  const handleRangeChange = useCallback((r: TimeRange) => {
     setRange(r)
     const valid = VALID_INTERVALS[r]
     if (!valid.includes(interval)) setInterval(DEFAULT_INTERVAL[r])
-  }
+  }, [interval])
 
-  const handleSymbolSelect = (symbol: string) => {
+  const handleSymbolSelect = useCallback((symbol: string) => {
     router.push(`/stock/${encodeURIComponent(symbol)}`)
-  }
+  }, [router])
 
   return (
     <MarketStatusCtx.Provider value={{ isOpen, lastUpdated }}>

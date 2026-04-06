@@ -29,6 +29,8 @@ class StockPrice(Base):
     __table_args__ = (
         UniqueConstraint("time", "symbol", name="uq_price_time_symbol"),
         Index("idx_symbol_time", "symbol", "time"),
+        # Covers breadth fallback query: WHERE time >= X AND ltp > 0
+        Index("idx_sp_time_ltp", "time", "ltp"),
     )
 
 

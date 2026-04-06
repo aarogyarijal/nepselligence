@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { StockAnalysis } from '@/types/market'
 import { TipLabel } from '@/components/Tooltip'
 
@@ -28,7 +29,7 @@ const SMA_CONFIG: Record<string, { label: string; color: string }> = {
   below_50: { label: 'Below 50', color: 'text-red-400' },
 }
 
-export default function SignalsCard({ signals }: { signals: StockAnalysis['signals'] }) {
+function SignalsCard({ signals }: { signals: StockAnalysis['signals'] }) {
   const trend = signals.trend ? TREND_CONFIG[signals.trend] : null
   const momentum = signals.momentum ? MOMENTUM_CONFIG[signals.momentum] : null
   const volume = signals.volumeTrend ? VOLUME_CONFIG[signals.volumeTrend] : null
@@ -143,3 +144,5 @@ function Row({ label, children }: { label: React.ReactNode; children: React.Reac
     </div>
   )
 }
+
+export default memo(SignalsCard)

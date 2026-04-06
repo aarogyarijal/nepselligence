@@ -1,10 +1,10 @@
 'use client'
-
+import { memo } from 'react'
 import type { StockAnalysis } from '@/types/market'
 import { TipLabel } from '@/components/Tooltip'
 import { formatPrice } from '@/lib/format'
 
-export default function StockHeader({ analysis }: { analysis: StockAnalysis }) {
+function StockHeader({ analysis }: { analysis: StockAnalysis }) {
   const { symbol, name, sector, price } = analysis
   const isPositive = (price.change ?? 0) >= 0
 
@@ -93,3 +93,5 @@ export default function StockHeader({ analysis }: { analysis: StockAnalysis }) {
     </div>
   )
 }
+
+export default memo(StockHeader)

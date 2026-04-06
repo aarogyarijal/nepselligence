@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, memo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
@@ -16,7 +16,7 @@ interface TurnoverLeadersProps {
   onFloorsheetClick?: (symbol: string) => void
 }
 
-export default function TurnoverLeaders({ isOpen, range, onSymbolClick, onFloorsheetClick }: TurnoverLeadersProps) {
+function TurnoverLeaders({ isOpen, range, onSymbolClick, onFloorsheetClick }: TurnoverLeadersProps) {
   const [leaders, setLeaders] = useState<TurnoverLeader[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -101,3 +101,5 @@ export default function TurnoverLeaders({ isOpen, range, onSymbolClick, onFloors
     </ResponsiveContainer>
   )
 }
+
+export default memo(TurnoverLeaders)

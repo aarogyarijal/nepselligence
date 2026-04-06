@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { StockAnalysis } from '@/types/market'
 import { TipLabel } from '@/components/Tooltip'
 import { formatPrice } from '@/lib/format'
@@ -20,11 +21,11 @@ function RSIBar({ value }: { value: number }) {
   )
 }
 
-export default function TechnicalsCard({ technicals }: { technicals: StockAnalysis['technicals'] }) {
+function TechnicalsCard({ technicals }: { technicals: StockAnalysis['technicals'] }) {
   const { sma20, sma50, sma200, ema12, ema26, rsi14, macd, bollingerBands, atr14 } = technicals
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 h-full">
       <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-4">Technicals</h2>
       <div className="space-y-3">
 
@@ -208,3 +209,5 @@ function Row({ label, children }: { label: React.ReactNode; children: React.Reac
 function Divider() {
   return <div className="border-t border-slate-800" />
 }
+
+export default memo(TechnicalsCard)

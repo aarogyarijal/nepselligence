@@ -382,7 +382,14 @@ class IngestionScheduler:
                         change=row["change"],
                         change_pct=row["changePct"],
                     )
-                    stmt = stmt.on_conflict_do_nothing(constraint="uq_sector_date")
+                    stmt = stmt.on_conflict_do_update(
+                        constraint="uq_sector_date",
+                        set_={
+                            "index_value": stmt.excluded.index_value,
+                            "change": stmt.excluded.change,
+                            "change_pct": stmt.excluded.change_pct,
+                        },
+                    )
                     db.execute(stmt)
 
             # --- Top Gainers ---

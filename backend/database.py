@@ -9,8 +9,9 @@ engine = create_engine(
     settings.database_url,
     echo=settings.environment == "development",
     pool_pre_ping=True,  # Test connection before using
-    pool_size=5,
-    max_overflow=10,
+    pool_size=20,
+    max_overflow=20,
+    pool_recycle=3600,   # Recycle connections after 1h to prevent stale sockets
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

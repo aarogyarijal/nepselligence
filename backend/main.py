@@ -592,12 +592,15 @@ async def admin_run_ingest_news():
 
 
 @app.get("/api/stocks/{symbol}/floorsheet")
-async def get_symbol_floorsheet(symbol: str, limit: int = 100):
-    """Get recent floorsheet for symbol."""
+async def get_symbol_floorsheet(symbol: str, limit: int = 200, days: int = 30):
+    """Get recent floorsheet for symbol. Defaults to last 30 days, max 500 rows."""
+    limit = min(limit, 500)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     db = SessionLocal()
     try:
         floorsheet = db.query(Floorsheet).filter(
-            Floorsheet.symbol == symbol
+            Floorsheet.symbol == symbol,
+            Floorsheet.time >= cutoff,
         ).order_by(Floorsheet.time.desc()).limit(limit).all()
         return [
             {
@@ -1414,9 +1417,12 @@ async def get_stock_analysis(symbol: str):
 
     db = SessionLocal()
     try:
-        # --- Fetch all price rows for symbol (backfill + live) ---
+        # --- Fetch price rows for symbol — cap at 2 years to bound memory usage.
+        # SMA200 needs ~200 trading days (~10 months), so 2 years is more than sufficient.
+        cutoff_2y = datetime.now(timezone.utc) - timedelta(days=730)
         rows = db.query(StockPrice).filter(
             StockPrice.symbol == sym,
+            StockPrice.time >= cutoff_2y,
         ).order_by(StockPrice.time.asc()).all()
 
         if not rows:
@@ -1652,7 +1658,7 @@ async def get_stock_analysis(symbol: str):
         }
 
         envelope = make_envelope(data, "db")
-        cache.set(cache_key, envelope, ttl=300)
+        cache.set(cache_key, envelope, ttl=60)
         return envelope
 
     finally:

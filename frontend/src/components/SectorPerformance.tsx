@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, memo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Cell, ReferenceLine,
   Tooltip, ResponsiveContainer, LineChart, Line,
@@ -37,7 +37,7 @@ function Sparkline({ points, color }: { points: IntradayPoint[]; color: string }
   )
 }
 
-export default function SectorPerformance({ isOpen, range, interval = '1min' }: SectorPerformanceProps) {
+function SectorPerformance({ isOpen, range, interval = '1min' }: SectorPerformanceProps) {
   const [sectors, setSectors] = useState<SectorData[]>([])
   const [intraday, setIntraday] = useState<Record<string, IntradayPoint[]>>({})
   const [loading, setLoading] = useState(true)
@@ -168,3 +168,5 @@ export default function SectorPerformance({ isOpen, range, interval = '1min' }: 
     </ResponsiveContainer>
   )
 }
+
+export default memo(SectorPerformance)

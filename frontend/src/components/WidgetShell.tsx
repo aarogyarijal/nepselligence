@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode } from 'react'
+import { ReactNode, memo } from 'react'
 
 interface WidgetShellProps {
   title?: string
@@ -14,7 +14,7 @@ interface WidgetShellProps {
 }
 
 /** Shared wrapper for all dashboard widgets. Handles loading/error/empty states uniformly. */
-export default function WidgetShell({
+function WidgetShell({
   title,
   loading,
   error,
@@ -66,3 +66,5 @@ export default function WidgetShell({
     </div>
   )
 }
+
+export default memo(WidgetShell)

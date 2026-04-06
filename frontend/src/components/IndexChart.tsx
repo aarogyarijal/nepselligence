@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, memo } from 'react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine,
@@ -37,7 +37,7 @@ function formatTime(isoString: string, range: TimeRange): string {
   })
 }
 
-export default function IndexChart({ isOpen, range, interval = '1min' }: IndexChartProps) {
+function IndexChart({ isOpen, range, interval = '1min' }: IndexChartProps) {
   const [data, setData] = useState<ChartPoint[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -71,9 +71,10 @@ export default function IndexChart({ isOpen, range, interval = '1min' }: IndexCh
   const isNegative = change < 0
   const color = isNegative ? '#dc2626' : '#16a34a'
 
-  const chartData = data.length === 1
-    ? [{ ...data[0], time: '' }, data[0]]
-    : data
+  const chartData = useMemo(
+    () => data.length === 1 ? [{ ...data[0], time: '' }, data[0]] : data,
+    [data]
+  )
 
   const values = data.map(d => d.value)
   const minValue = values.length ? Math.min(...values) : 0
@@ -81,7 +82,7 @@ export default function IndexChart({ isOpen, range, interval = '1min' }: IndexCh
   const padding = (maxValue - minValue) * 0.1 || 1
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" suppressHydrationWarning>
       {/* Header: current value + change */}
       <div className="flex items-center gap-3 mb-2 shrink-0">
         {last && (
@@ -158,3 +159,5 @@ export default function IndexChart({ isOpen, range, interval = '1min' }: IndexCh
     </div>
   )
 }
+
+export default memo(IndexChart)

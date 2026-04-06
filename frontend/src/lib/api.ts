@@ -24,10 +24,20 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
 
+// In-flight request deduplication: if the same GET path is already pending,
+// return the same promise rather than firing a second network request.
+const _pending = new Map<string, Promise<unknown>>()
+
 async function get<T>(path: string): Promise<ApiEnvelope<T>> {
-  const res = await fetch(`${API_URL}${path}`, { mode: 'cors' })
-  if (!res.ok) throw new Error(`${path} → ${res.status}`)
-  return res.json()
+  if (_pending.has(path)) return _pending.get(path) as Promise<ApiEnvelope<T>>
+  const promise = fetch(`${API_URL}${path}`, { mode: 'cors' })
+    .then(res => {
+      if (!res.ok) throw new Error(`${path} → ${res.status}`)
+      return res.json() as Promise<ApiEnvelope<T>>
+    })
+    .finally(() => _pending.delete(path))
+  _pending.set(path, promise)
+  return promise
 }
 
 export async function fetchMarketOverview(): Promise<ApiEnvelope<MarketOverview | null>> {

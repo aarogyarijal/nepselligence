@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { StockAnalysis } from '@/types/market'
 import { TipLabel } from '@/components/Tooltip'
 import { formatChangePct } from '@/lib/format'
@@ -17,7 +18,7 @@ function RetBar({ value, max }: { value: number; max: number }) {
   )
 }
 
-export default function RelPerfCard({ relativePerformance }: { relativePerformance: StockAnalysis['relativePerformance'] }) {
+function RelPerfCard({ relativePerformance }: { relativePerformance: StockAnalysis['relativePerformance'] }) {
   if (!relativePerformance) {
     return (
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
@@ -104,3 +105,5 @@ export default function RelPerfCard({ relativePerformance }: { relativePerforman
     </div>
   )
 }
+
+export default memo(RelPerfCard)

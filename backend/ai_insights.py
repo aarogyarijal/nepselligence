@@ -278,6 +278,16 @@ async def generate_insight(db: Session, provider_manager, insight_type: str, opt
         logger.info("No market data available, skipping AI insight")
         return
 
+    # Holiday guard: skip if the market hasn't had any activity in the last 8 hours.
+    # This prevents wasting Claude API calls on weekends and public holidays.
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=8)
+    recent_activity = db.query(MarketSummary).filter(
+        MarketSummary.time >= recent_cutoff
+    ).first()
+    if not recent_activity:
+        logger.info("No market activity in last 8h (holiday or weekend), skipping AI insight")
+        return
+
     opts = options or {}
 
     # Pick prompt and model based on type

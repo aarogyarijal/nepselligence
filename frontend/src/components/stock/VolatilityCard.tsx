@@ -1,8 +1,9 @@
+import { memo } from 'react'
 import type { StockAnalysis } from '@/types/market'
 import { TipLabel } from '@/components/Tooltip'
 import { formatPct, formatPrice } from '@/lib/format'
 
-export default function VolatilityCard({ volatility }: { volatility: StockAnalysis['volatility'] }) {
+function VolatilityCard({ volatility }: { volatility: StockAnalysis['volatility'] }) {
   const { daily30d, annualized30d, avgDailyRange20d } = volatility
 
   const annualizedLevel = annualized30d == null ? null
@@ -77,3 +78,5 @@ export default function VolatilityCard({ volatility }: { volatility: StockAnalys
     </div>
   )
 }
+
+export default memo(VolatilityCard)

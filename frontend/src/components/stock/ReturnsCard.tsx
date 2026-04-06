@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { StockAnalysis } from '@/types/market'
 import { TipLabel } from '@/components/Tooltip'
 import { formatChangePct } from '@/lib/format'
@@ -29,7 +30,7 @@ const PERIODS = [
   },
 ]
 
-export default function ReturnsCard({ returns }: { returns: StockAnalysis['returns'] }) {
+function ReturnsCard({ returns }: { returns: StockAnalysis['returns'] }) {
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
       <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-4">
@@ -61,3 +62,5 @@ export default function ReturnsCard({ returns }: { returns: StockAnalysis['retur
     </div>
   )
 }
+
+export default memo(ReturnsCard)

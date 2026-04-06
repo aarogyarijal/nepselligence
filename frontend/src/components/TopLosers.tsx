@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, memo } from 'react'
 import { fetchTopLosers } from '@/lib/api'
 import { formatPrice, formatChangePct } from '@/lib/format'
 import { usePolling } from '@/hooks/usePolling'
@@ -14,7 +14,7 @@ interface TopLosersProps {
   onFloorsheetClick?: (symbol: string) => void
 }
 
-export default function TopLosers({ isOpen, range, onSymbolClick, onFloorsheetClick }: TopLosersProps) {
+function TopLosers({ isOpen, range, onSymbolClick, onFloorsheetClick }: TopLosersProps) {
   const [losers, setLosers] = useState<TopMover[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -90,3 +90,5 @@ export default function TopLosers({ isOpen, range, onSymbolClick, onFloorsheetCl
     </div>
   )
 }
+
+export default memo(TopLosers)

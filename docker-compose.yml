@@ -7,6 +7,13 @@ services:
       POSTGRES_USER: nepselligence
       POSTGRES_PASSWORD: nepselligence
       POSTGRES_DB: nepselligence
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c work_mem=16MB
+      -c effective_cache_size=768MB
+      -c max_connections=100
+      -c wal_buffers=16MB
     ports:
       - "5432:5432"
     volumes:
@@ -60,6 +67,20 @@ services:
     networks:
       - nepselligence
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
 
   # Next.js frontend dashboard
   frontend:

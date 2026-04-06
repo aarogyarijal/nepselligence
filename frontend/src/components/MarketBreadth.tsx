@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, memo } from 'react'
 import { fetchMarketBreadth } from '@/lib/api'
 import { usePolling } from '@/hooks/usePolling'
 import type { MarketBreadth } from '@/types/market'
@@ -11,7 +11,7 @@ interface MarketBreadthProps {
   range: TimeRange
 }
 
-export default function MarketBreadthWidget({ isOpen, range }: MarketBreadthProps) {
+function MarketBreadthWidget({ isOpen, range }: MarketBreadthProps) {
   const [breadth, setBreadth] = useState<MarketBreadth | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -83,3 +83,5 @@ export default function MarketBreadthWidget({ isOpen, range }: MarketBreadthProp
     </div>
   )
 }
+
+export default memo(MarketBreadthWidget)

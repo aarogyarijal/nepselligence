@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, memo } from 'react'
 import { fetchTopGainers } from '@/lib/api'
 import { formatPrice, formatChangePct } from '@/lib/format'
 import { usePolling } from '@/hooks/usePolling'
@@ -14,7 +14,7 @@ interface TopGainersProps {
   onFloorsheetClick?: (symbol: string) => void
 }
 
-export default function TopGainers({ isOpen, range, onSymbolClick, onFloorsheetClick }: TopGainersProps) {
+function TopGainers({ isOpen, range, onSymbolClick, onFloorsheetClick }: TopGainersProps) {
   const [gainers, setGainers] = useState<TopMover[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -90,3 +90,5 @@ export default function TopGainers({ isOpen, range, onSymbolClick, onFloorsheetC
     </div>
   )
 }
+
+export default memo(TopGainers)

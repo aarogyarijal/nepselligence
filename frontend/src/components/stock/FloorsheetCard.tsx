@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { StockAnalysis } from '@/types/market'
 import { TipLabel } from '@/components/Tooltip'
 
@@ -48,7 +49,7 @@ function BrokerTable({
   )
 }
 
-export default function FloorsheetCard({ floorsheet }: { floorsheet: StockAnalysis['floorsheet'] }) {
+function FloorsheetCard({ floorsheet }: { floorsheet: StockAnalysis['floorsheet'] }) {
   if (!floorsheet) return null
 
   const { topBuyers, topSellers, avgTradeSize, vwap, totalTrades } = floorsheet
@@ -113,3 +114,5 @@ export default function FloorsheetCard({ floorsheet }: { floorsheet: StockAnalys
     </div>
   )
 }
+
+export default memo(FloorsheetCard)

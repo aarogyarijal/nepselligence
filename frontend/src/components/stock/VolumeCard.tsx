@@ -1,8 +1,9 @@
+import { memo } from 'react'
 import type { StockAnalysis } from '@/types/market'
 import { TipLabel } from '@/components/Tooltip'
 import { formatVolume } from '@/lib/format'
 
-export default function VolumeCard({ volume }: { volume: StockAnalysis['volume'] }) {
+function VolumeCard({ volume }: { volume: StockAnalysis['volume'] }) {
   const { latest, avg20d, avg90d, volumeRatio, avgTurnover20d } = volume
 
   const latestPct = latest != null && avg20d != null && avg20d > 0
@@ -100,3 +101,5 @@ export default function VolumeCard({ volume }: { volume: StockAnalysis['volume']
     </div>
   )
 }
+
+export default memo(VolumeCard)
