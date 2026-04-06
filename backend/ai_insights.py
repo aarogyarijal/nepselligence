@@ -115,42 +115,74 @@ def _gather_week_context(db: Session) -> list[dict]:
     ]
 
 
-def _build_open_prompt(ctx: dict) -> str:
-    return f"""You are a NEPSE market analyst. The Nepal Stock Exchange (NEPSE) has just opened for trading.
+def _market_focus_context(focus: list[str]) -> str:
+    """Build a focus instruction string for market prompts."""
+    if not focus:
+        return ""
+    labels = {
+        "index": "NEPSE index levels and direction",
+        "sectors": "sector rotation and sub-index performance",
+        "breadth": "market breadth (advance/decline ratio)",
+        "movers": "top gaining and losing stocks",
+    }
+    selected = [labels[f] for f in focus if f in labels]
+    if not selected:
+        return ""
+    return f"Prioritize: {', '.join(selected)}."
 
+
+def _market_depth_instructions(depth: str) -> tuple[str, str]:
+    """Return (word_limit_str, detail_instruction) for a given depth."""
+    if depth == "brief":
+        return "under 120 words", "Be extremely concise — one sentence per section maximum."
+    return "under 280 words", "Be thorough and specific with numbers."
+
+
+def _build_open_prompt(ctx: dict, options: dict | None = None) -> str:
+    opts = options or {}
+    focus_ctx = _market_focus_context(opts.get("focus", []))
+    word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
+    return f"""You are a NEPSE market analyst. The Nepal Stock Exchange (NEPSE) has just opened for trading.
+{f"Configuration: {focus_ctx}" if focus_ctx else ""}
 <market_data>
 {json.dumps(ctx, indent=2)}
 </market_data>
 
-Write a concise morning market briefing in plain text (no markdown, no code fences) with exactly 3 sections:
+Write a morning market briefing in plain text (no markdown, no code fences) with exactly 3 sections:
 
 1. SUMMARY: One sentence on the opening context — yesterday's close, index level, and initial market tone.
 2. SIGNALS: Two to three stocks or sectors worth watching today based on recent momentum.
 3. ANOMALIES: Any pre-market observations or risks to watch (high breadth imbalance, sector weakness, etc.).
 
-Keep the total under 180 words. Be factual and specific."""
+Keep the total {word_limit}. {detail_instr} Be factual and specific."""
 
 
-def _build_hourly_prompt(ctx: dict) -> str:
+def _build_hourly_prompt(ctx: dict, options: dict | None = None) -> str:
+    opts = options or {}
+    focus_ctx = _market_focus_context(opts.get("focus", []))
+    word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
     return f"""You are a NEPSE market analyst providing a mid-session update.
-
+{f"Configuration: {focus_ctx}" if focus_ctx else ""}
 <market_data>
 {json.dumps(ctx, indent=2)}
 </market_data>
 
-Write a concise mid-session update in plain text (no markdown, no code fences) with exactly 3 sections:
+Write a mid-session update in plain text (no markdown, no code fences) with exactly 3 sections:
 
 1. SUMMARY: One sentence on current market direction — NEPSE level, change, and intraday breadth.
 2. SIGNALS: Two stocks showing notable intraday strength or weakness and why they stand out.
 3. ANOMALIES: Any unusual activity — sector rotation, volume spikes, or breadth extremes.
 
-Keep the total under 180 words. Be specific about numbers (index level, % changes)."""
+Keep the total {word_limit}. {detail_instr} Be specific about numbers (index level, % changes)."""
 
 
-def _build_close_prompt(ctx: dict, day_insights: list[str]) -> str:
+def _build_close_prompt(ctx: dict, day_insights: list[str], options: dict | None = None) -> str:
+    opts = options or {}
+    focus_ctx = _market_focus_context(opts.get("focus", []))
+    word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
     prior = "\n\n".join(day_insights) if day_insights else "No earlier insights today."
     return f"""You are a NEPSE market analyst writing the end-of-day market summary.
-
+{f"Configuration: {focus_ctx}" if focus_ctx else ""}
 <market_data>
 {json.dumps(ctx, indent=2)}
 </market_data>
@@ -159,18 +191,21 @@ def _build_close_prompt(ctx: dict, day_insights: list[str]) -> str:
 {prior}
 </earlier_insights_today>
 
-Write a thorough end-of-day analysis in plain text (no markdown, no code fences) with exactly 3 sections:
+Write an end-of-day analysis in plain text (no markdown, no code fences) with exactly 3 sections:
 
 1. SUMMARY: Two to three sentences summarizing the full trading session — final NEPSE level, overall direction, turnover, and market breadth conclusion.
 2. SIGNALS: Three to four stocks worth monitoring tomorrow based on today's close — include price levels and reasons.
-3. ANOMALIES: Notable events from today's session — sector concentration, unusual volumes, large swings, or breadth extremes that could affect tomorrow.
+3. ANOMALIES: Notable events from today's session — sector concentration, unusual volumes, large swings, or breadth extremes.
 
-Keep the total under 280 words. Reference the earlier intraday insights where relevant to show progression."""
+Keep the total {word_limit}. {detail_instr} Reference the earlier intraday insights where relevant."""
 
 
-def _build_weekly_prompt(ctx: dict, week_data: list[dict]) -> str:
+def _build_weekly_prompt(ctx: dict, week_data: list[dict], options: dict | None = None) -> str:
+    opts = options or {}
+    focus_ctx = _market_focus_context(opts.get("focus", []))
+    word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
     return f"""You are a NEPSE market analyst writing the weekly market wrap.
-
+{f"Configuration: {focus_ctx}" if focus_ctx else ""}
 <this_week_data>
 {json.dumps(week_data, indent=2)}
 </this_week_data>
@@ -185,10 +220,10 @@ Write a weekly market wrap in plain text (no markdown, no code fences) with exac
 2. SIGNALS: Three stocks or sectors that defined the week — both leaders and laggards with context.
 3. ANOMALIES: Any week-level themes worth watching next week — trends, reversals, volume patterns, or macro signals.
 
-Keep the total under 300 words. Be analytical, not just descriptive."""
+Keep the total {word_limit}. {detail_instr} Be analytical, not just descriptive."""
 
 
-async def generate_insight(db: Session, provider_manager, insight_type: str) -> None:
+async def generate_insight(db: Session, provider_manager, insight_type: str, options: dict | None = None) -> None:
     """Generate and store a Claude insight of the specified type. Skips if no API key."""
     if not settings.claude_api_key:
         logger.info("No CLAUDE_API_KEY configured, skipping AI insight generation")
@@ -199,25 +234,26 @@ async def generate_insight(db: Session, provider_manager, insight_type: str) -> 
         logger.info("No market data available, skipping AI insight")
         return
 
+    opts = options or {}
+
     # Pick prompt and model based on type
     if insight_type == MARKET_OPEN:
-        prompt = _build_open_prompt(ctx)
+        prompt = _build_open_prompt(ctx, opts)
         model = settings.claude_model_fast
     elif insight_type == HOURLY:
-        prompt = _build_hourly_prompt(ctx)
+        prompt = _build_hourly_prompt(ctx, opts)
         model = settings.claude_model_fast
     elif insight_type == WEEKLY_WRAP:
         week_data = _gather_week_context(db)
-        prompt = _build_weekly_prompt(ctx, week_data)
+        prompt = _build_weekly_prompt(ctx, week_data, opts)
         model = settings.claude_model_deep
     else:  # DAILY_CLOSE (default)
-        today = date.today()
         today_insights = db.query(AIInsight).filter(
             AIInsight.generated_at >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0),
             AIInsight.insight_type.in_([MARKET_OPEN, HOURLY]),
         ).order_by(AIInsight.generated_at.asc()).all()
         day_texts = [i.insight_text for i in today_insights]
-        prompt = _build_close_prompt(ctx, day_texts)
+        prompt = _build_close_prompt(ctx, day_texts, opts)
         model = settings.claude_model_deep
 
     try:
@@ -265,16 +301,20 @@ async def generate_market_insight(db: Session, provider_manager) -> None:
 STOCK_INSIGHT = "stock_insight"
 
 
-def _build_stock_insight_prompt(symbol: str, analysis: dict) -> str:
-    """Build prompt for stock-specific one-shot analysis."""
+def _build_stock_insight_prompt(symbol: str, analysis: dict, options: dict | None = None) -> str:
+    """Build prompt for stock-specific one-shot analysis. options shapes horizon, signals, and goal."""
+    opts = options or {}
+    horizon = opts.get("horizon", "medium_term")
+    goal = opts.get("goal", "neutral")
+    active_signals = set(opts.get("signals") or ["trend", "momentum", "volume", "volatility", "relperf"])
+
     p = analysis.get("price") or {}
     r = analysis.get("returns") or {}
     t = analysis.get("technicals") or {}
     v = analysis.get("volume") or {}
     vol = analysis.get("volatility") or {}
     rp = analysis.get("relativePerformance") or {}
-    signals = analysis.get("signals") or {}
-
+    sig = analysis.get("signals") or {}
     macd_d = t.get("macd") or {}
     bb = t.get("bollingerBands") or {}
     ltp = p.get("ltp", 0)
@@ -283,34 +323,87 @@ def _build_stock_insight_prompt(symbol: str, analysis: dict) -> str:
     def _f(val, dec=2):
         return f"{val:.{dec}f}" if val is not None else "N/A"
 
+    # Horizon context
+    horizon_label = {
+        "short_term":  "SHORT-TERM (1–5 day trade setup) — prioritize intraday momentum, near-term support/resistance",
+        "medium_term": "MEDIUM-TERM (1–4 week swing trade) — prioritize SMA20/50 alignment, MACD trend, volume confirmation",
+        "long_term":   "LONG-TERM (1–6 month position) — prioritize SMA50/200 alignment, 52-week range context, alpha vs NEPSE",
+    }.get(horizon, "MEDIUM-TERM (1–4 week swing trade)")
+
+    # Goal context
+    goal_label = {
+        "entry": "Goal: identify entry points — emphasize oversold conditions, support levels, favorable risk/reward",
+        "exit":  "Goal: evaluate exit/take-profit — emphasize overbought conditions, resistance levels, momentum divergence",
+        "risk":  "Goal: risk assessment — emphasize volatility, ATR-based stop levels, downside support gaps",
+    }.get(goal, "")
+
+    # Returns filtered by horizon
+    if horizon == "short_term":
+        returns_line = f"Returns: 1D={_f(r.get('1d'))}%, 5D={_f(r.get('5d'))}%"
+    elif horizon == "long_term":
+        returns_line = f"Returns: 1M={_f(r.get('1m'))}%, 3M={_f(r.get('3m'))}%, 6M={_f(r.get('6m'))}%, 1Y={_f(r.get('1y'))}%"
+    else:
+        returns_line = f"Returns: 1D={_f(r.get('1d'))}%, 5D={_f(r.get('5d'))}%, 1M={_f(r.get('1m'))}%, 3M={_f(r.get('3m'))}%"
+
+    # Build data sections selectively
+    data_parts = [
+        f"Price: Rs {_f(ltp)} ({'+' if cpct >= 0 else ''}{_f(cpct)}% today, prev close Rs {_f(p.get('prevClose'))})",
+        f"52W range: Rs {_f(p.get('low52w'))} – Rs {_f(p.get('high52w'))} (at {(p.get('rangePosition') or 0)*100:.0f}% of range), ATH Rs {_f(p.get('allTimeHigh'))}",
+        returns_line,
+    ]
+
+    if "momentum" in active_signals:
+        data_parts.append(
+            f"Momentum: RSI(14)={_f(t.get('rsi14'))}, "
+            f"MACD={_f(macd_d.get('macd'))}/Signal={_f(macd_d.get('signal'))}/Hist={_f(macd_d.get('histogram'))}"
+        )
+
+    if "trend" in active_signals:
+        sma_parts = [f"SMA20=Rs {_f(t.get('sma20'))}", f"SMA50=Rs {_f(t.get('sma50'))}"]
+        if horizon != "short_term":
+            sma_parts.append(f"SMA200=Rs {_f(t.get('sma200'))}")
+        sma_parts += [f"EMA12=Rs {_f(t.get('ema12'))}", f"EMA26=Rs {_f(t.get('ema26'))}"]
+        data_parts.append("Trend: " + ", ".join(sma_parts))
+
+    if "volatility" in active_signals:
+        data_parts.append(
+            f"Volatility: ATR(14)=Rs {_f(t.get('atr14'))}, "
+            f"Bollinger={_f(bb.get('lower'))}|{_f(bb.get('middle'))}|{_f(bb.get('upper'))}, "
+            f"Daily(30D)={_f((vol.get('daily30d') or 0)*100)}%"
+        )
+
+    if "volume" in active_signals:
+        data_parts.append(
+            f"Volume: Today={v.get('latest')}, 20D avg={_f(v.get('avg20d'), 0)}, ratio={_f(v.get('volumeRatio'))}x"
+        )
+
+    if "relperf" in active_signals:
+        data_parts.append(
+            f"vs NEPSE(30D): Stock={_f(rp.get('stockReturn30d'))}%, NEPSE={_f(rp.get('nepseReturn30d'))}%, Alpha={_f(rp.get('alpha30d'))}%"
+        )
+
+    data_parts.append(
+        f"Signals: Trend={sig.get('trend')}, Momentum={sig.get('momentum')}, "
+        f"Volume={sig.get('volumeTrend')}, vs SMA={sig.get('priceVsSMA')}"
+    )
+
+    config_lines = [f"Analysis horizon: {horizon_label}."]
+    if goal_label:
+        config_lines.append(goal_label + ".")
+
     return f"""You are a NEPSE stock analyst. Provide a data-driven analysis of {symbol} ({analysis.get('name', '')}, sector: {analysis.get('sector', '')}).
 
+{" ".join(config_lines)}
+
 <current_data>
-Price: Rs {_f(ltp)} ({'+' if cpct >= 0 else ''}{_f(cpct)}% today, prev close Rs {_f(p.get('prevClose'))})
-52W range: Rs {_f(p.get('low52w'))} – Rs {_f(p.get('high52w'))} (at {(p.get('rangePosition') or 0)*100:.0f}% of range)
-ATH: Rs {_f(p.get('allTimeHigh'))}
-
-Returns: 1D={_f(r.get('1d'))}%, 5D={_f(r.get('5d'))}%, 1M={_f(r.get('1m'))}%, 3M={_f(r.get('3m'))}%, 6M={_f(r.get('6m'))}%, 1Y={_f(r.get('1y'))}%
-
-Technicals:
-  RSI(14): {_f(t.get('rsi14'))}
-  MACD: {_f(macd_d.get('macd'))} / Signal: {_f(macd_d.get('signal'))} / Hist: {_f(macd_d.get('histogram'))}
-  Bollinger: {_f(bb.get('lower'))} | {_f(bb.get('middle'))} | {_f(bb.get('upper'))}
-  SMA20: Rs {_f(t.get('sma20'))}, SMA50: Rs {_f(t.get('sma50'))}, SMA200: Rs {_f(t.get('sma200'))}
-  EMA12: Rs {_f(t.get('ema12'))}, EMA26: Rs {_f(t.get('ema26'))}, ATR(14): Rs {_f(t.get('atr14'))}
-
-Volume: Today={v.get('latest')}, 20D avg={_f(v.get('avg20d'), 0)}, ratio={_f(v.get('volumeRatio'))}x
-Volatility: Daily(30D)={_f((vol.get('daily30d') or 0)*100)}%, Annualized={_f((vol.get('annualized30d') or 0)*100)}%
-vs NEPSE(30D): Stock={_f(rp.get('stockReturn30d'))}%, NEPSE={_f(rp.get('nepseReturn30d'))}%, Alpha={_f(rp.get('alpha30d'))}%
-
-Signals: Trend={signals.get('trend')}, Momentum={signals.get('momentum')}, Volume={signals.get('volumeTrend')}, vs SMA={signals.get('priceVsSMA')}
+{chr(10).join(data_parts)}
 </current_data>
 
 Write a concise analysis in plain text (no markdown, no code fences) with exactly 3 sections:
 
-1. SUMMARY: Two sentences on the stock's current technical position and key level to watch.
-2. SIGNALS: Two to three specific technical observations — what RSI, MACD, Bollinger, and the SMA stack say about near-term direction.
-3. ANOMALIES: Any standout observations — unusual volume, volatility, price vs MA divergence, or notable return patterns.
+1. SUMMARY: Two sentences on the stock's current {horizon.replace('_', '-')} technical position and key level to watch.
+2. SIGNALS: Two to three specific observations from the selected indicators — what they say about near-term direction given the {'current' if goal == 'neutral' else goal.replace('_', ' ')} perspective.
+3. ANOMALIES: Any standout observations — unusual volume, volatility, divergence, or patterns relevant to {horizon.replace('_', ' ')} trading.
 
 Under 200 words total. Be specific with price levels and percentages."""
 
@@ -333,12 +426,12 @@ Guidelines:
 - If asked about data not in the context, say so rather than guessing"""
 
 
-async def generate_stock_insight_text(symbol: str, analysis: dict) -> str:
+async def generate_stock_insight_text(symbol: str, analysis: dict, options: dict | None = None) -> str:
     """Generate a Claude insight for a specific stock. Returns raw text."""
     if not settings.claude_api_key:
         raise RuntimeError("CLAUDE_API_KEY not configured")
 
-    prompt = _build_stock_insight_prompt(symbol, analysis)
+    prompt = _build_stock_insight_prompt(symbol, analysis, options)
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=settings.claude_api_key)

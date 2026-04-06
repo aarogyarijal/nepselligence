@@ -17,6 +17,8 @@ import type {
   StockChartResponse,
   StockInsight,
   StockChatMessage,
+  StockInsightOptions,
+  MarketInsightOptions,
 } from '@/types/market'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
@@ -146,12 +148,33 @@ export async function fetchStockInsight(symbol: string): Promise<StockInsight | 
   return res.json()
 }
 
-export async function generateStockInsight(symbol: string): Promise<StockInsight> {
+export async function generateStockInsight(
+  symbol: string,
+  options?: StockInsightOptions
+): Promise<StockInsight> {
   const res = await fetch(
     `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/insight`,
-    { method: 'POST', mode: 'cors' }
+    {
+      method: 'POST',
+      mode: 'cors',
+      headers: options ? { 'Content-Type': 'application/json' } : undefined,
+      body: options ? JSON.stringify({ options }) : undefined,
+    }
   )
   if (!res.ok) throw new Error(`Failed to generate insight: ${res.status}`)
+  return res.json()
+}
+
+export async function generateMarketInsight(
+  type = 'daily_close',
+  options?: MarketInsightOptions
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${API_URL}/api/admin/run/generate-insight?type=${type}`, {
+    method: 'POST',
+    mode: 'cors',
+    headers: options ? { 'Content-Type': 'application/json' } : undefined,
+    body: options ? JSON.stringify({ options }) : undefined,
+  })
   return res.json()
 }
 

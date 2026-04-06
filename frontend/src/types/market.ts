@@ -148,11 +148,29 @@ export interface StockInsight {
   insight_type: string
   symbol: string
   generated_at: string
+  extra_data?: Record<string, unknown>
 }
 
 export interface StockChatMessage {
   role: 'user' | 'assistant'
   content: string
+}
+
+export type InsightHorizon = 'short_term' | 'medium_term' | 'long_term'
+export type InsightSignal = 'trend' | 'momentum' | 'volume' | 'volatility' | 'relperf'
+export type InsightGoal = 'neutral' | 'entry' | 'exit' | 'risk'
+export type MarketFocus = 'index' | 'sectors' | 'breadth' | 'movers'
+export type InsightDepth = 'brief' | 'detailed'
+
+export interface StockInsightOptions {
+  horizon: InsightHorizon
+  signals: InsightSignal[]
+  goal: InsightGoal
+}
+
+export interface MarketInsightOptions {
+  depth: InsightDepth
+  focus: MarketFocus[]
 }
 
 export interface StockAnalysis {

@@ -1,11 +1,11 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { fetchLatestInsight, fetchInsightHistory } from '@/lib/api'
+import { fetchLatestInsight, fetchInsightHistory, generateMarketInsight } from '@/lib/api'
 import { useFreshness } from '@/hooks/useFreshness'
 import { usePolling } from '@/hooks/usePolling'
 import { formatNPT } from '@/lib/format'
-import type { AIInsight, InsightType } from '@/types/market'
+import type { AIInsight, InsightType, MarketInsightOptions, MarketFocus, InsightDepth } from '@/types/market'
 
 type Tab = 'Summary' | 'Signals' | 'Anomalies'
 const TABS: Tab[] = ['Summary', 'Signals', 'Anomalies']
@@ -53,6 +53,20 @@ function freshnessLabel(state: string, lastUpdated: string | null): string {
   return `As of ${formatNPT(lastUpdated)}`
 }
 
+const FOCUS_OPTIONS: { value: MarketFocus; label: string }[] = [
+  { value: 'index',   label: 'Index' },
+  { value: 'sectors', label: 'Sectors' },
+  { value: 'breadth', label: 'Breadth' },
+  { value: 'movers',  label: 'Top Movers' },
+]
+
+const INSIGHT_TYPES: { value: InsightType; label: string }[] = [
+  { value: 'market_open', label: 'Open' },
+  { value: 'hourly',      label: 'Hourly' },
+  { value: 'daily_close', label: 'Close' },
+  { value: 'weekly_wrap', label: 'Weekly' },
+]
+
 interface AIPanelProps {
   isOpen: boolean
 }
@@ -64,6 +78,13 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
   const [error, setError] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('Summary')
   const [showHistory, setShowHistory] = useState(false)
+  const [showGenerate, setShowGenerate] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [genType, setGenType] = useState<InsightType>('daily_close')
+  const [genOptions, setGenOptions] = useState<MarketInsightOptions>({
+    depth: 'detailed',
+    focus: ['index', 'sectors', 'breadth', 'movers'],
+  })
 
   const load = useCallback(async () => {
     try {
@@ -82,8 +103,27 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
   }, [])
 
   useEffect(() => { load() }, [load])
-  // Poll every 60s during market hours, 5 min otherwise
   usePolling(load, isOpen ? 60_000 : 300_000, true)
+
+  const handleGenerate = async () => {
+    setGenerating(true)
+    try {
+      await generateMarketInsight(genType, genOptions)
+      await load()
+      setShowGenerate(false)
+    } catch {
+      setError(true)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const toggleFocus = (f: MarketFocus) => {
+    const next = genOptions.focus.includes(f)
+      ? genOptions.focus.filter(x => x !== f)
+      : [...genOptions.focus, f]
+    setGenOptions(o => ({ ...o, focus: next.length ? next : o.focus }))
+  }
 
   const freshness = useFreshness(insight?.generated_at, isOpen)
   const parsed = insight ? parseInsight(insight.insight_text) : null
@@ -104,18 +144,16 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
     <div className="bg-slate-900 rounded-lg border border-slate-700 p-6 h-full flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-3 shrink-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <h2 className="text-xl font-semibold text-white">AI Insights</h2>
-          <span className="text-xs px-2 py-0.5 bg-blue-900/60 text-blue-300 rounded">
-            Claude
-          </span>
+          <span className="text-xs px-2 py-0.5 bg-blue-900/60 text-blue-300 rounded">Claude</span>
           {insight?.insight_type && (
             <span className="text-xs px-2 py-0.5 bg-slate-700 text-slate-300 rounded">
               {INSIGHT_TYPE_LABELS[insight.insight_type] ?? insight.insight_type}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 shrink-0">
           {freshness !== 'fresh' && insight && (
             <span className={`text-xs ${freshness === 'aging' ? 'text-yellow-400' : 'text-slate-500'}`}>
               {freshnessLabel(freshness, insight.generated_at)}
@@ -125,13 +163,83 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
             <button
               onClick={() => setShowHistory(v => !v)}
               className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-              title="Show insight history"
             >
-              {showHistory ? 'Hide history' : `+${otherInsights.length} earlier`}
+              {showHistory ? 'Hide' : `+${otherInsights.length} earlier`}
             </button>
           )}
+          <button
+            onClick={() => setShowGenerate(v => !v)}
+            className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+              showGenerate
+                ? 'bg-slate-700 border-slate-500 text-white'
+                : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            ⚙ Generate
+          </button>
         </div>
       </div>
+
+      {/* Generate options panel */}
+      {showGenerate && (
+        <div className="mb-3 p-3 border border-slate-700 rounded-lg bg-slate-800/60 space-y-3 shrink-0">
+          {/* Type */}
+          <div>
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1.5">Type</p>
+            <div className="flex gap-1.5">
+              {INSIGHT_TYPES.map(t => (
+                <button key={t.value} onClick={() => setGenType(t.value)}
+                  className={`flex-1 py-1 text-xs rounded border transition-colors ${
+                    genType === t.value
+                      ? 'bg-blue-700 border-blue-600 text-white'
+                      : 'bg-slate-800 border-slate-600 text-slate-400 hover:text-slate-200'
+                  }`}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Depth */}
+          <div>
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1.5">Depth</p>
+            <div className="flex gap-1.5">
+              {(['brief', 'detailed'] as InsightDepth[]).map(d => (
+                <button key={d} onClick={() => setGenOptions(o => ({ ...o, depth: d }))}
+                  className={`flex-1 py-1 text-xs rounded border transition-colors capitalize ${
+                    genOptions.depth === d
+                      ? 'bg-slate-600 border-slate-500 text-white'
+                      : 'bg-slate-800 border-slate-600 text-slate-400 hover:text-slate-200'
+                  }`}>
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Focus */}
+          <div>
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1.5">Focus</p>
+            <div className="flex flex-wrap gap-1.5">
+              {FOCUS_OPTIONS.map(f => (
+                <button key={f.value} onClick={() => toggleFocus(f.value)}
+                  className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                    genOptions.focus.includes(f.value)
+                      ? 'bg-slate-600 border-slate-500 text-white'
+                      : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'
+                  }`}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="w-full py-1.5 text-xs font-medium bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded-lg transition-colors"
+          >
+            {generating ? 'Generating…' : '↻ Generate Now'}
+          </button>
+        </div>
+      )}
 
       {/* History dropdown */}
       {showHistory && otherInsights.length > 0 && (

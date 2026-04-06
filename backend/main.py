@@ -404,35 +404,37 @@ async def admin_run_ingest_snapshot():
 
 
 @app.post("/api/admin/run/generate-insight")
-async def admin_run_generate_insight(type: str = "daily_close"):
-    """Manually trigger AI insight generation. type: market_open, hourly, daily_close, weekly_wrap"""
+async def admin_run_generate_insight(type: str = "daily_close", body: dict = Body(default={})):
+    """Manually trigger AI insight generation. type: market_open, hourly, daily_close, weekly_wrap.
+    Optional body: {options: {depth: 'brief'|'detailed', focus: ['index','sectors','breadth','movers']}}"""
     if scheduler is None:
         return {"ok": False, "error": "Scheduler not running"}
+    options = body.get("options") if body else None
     try:
-        if type == "market_open":
-            await scheduler.generate_ai_open_briefing()
-        elif type == "hourly":
-            await scheduler.generate_ai_hourly()
-        elif type == "weekly_wrap":
-            await scheduler.generate_ai_weekly()
-        else:
-            await scheduler.generate_ai_insight()
+        from .ai_insights import generate_insight, MARKET_OPEN, HOURLY, WEEKLY_WRAP, DAILY_CLOSE
+        db = SessionLocal()
+        try:
+            await generate_insight(db, scheduler.provider_manager, type, options)
+        finally:
+            db.close()
         return {"ok": True, "action": "generate_ai_insight", "type": type}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/stocks/{symbol}/insight")
-async def post_stock_insight(symbol: str):
-    """Generate a Claude AI insight for a specific stock and persist it."""
+async def post_stock_insight(symbol: str, body: dict = Body(default={})):
+    """Generate a Claude AI insight for a specific stock and persist it.
+    Optional body: {options: {horizon, signals, goal}}"""
     from .ai_insights import generate_stock_insight_text, STOCK_INSIGHT
     sym = symbol.upper()
+    options = body.get("options") if body else None
     try:
         analysis_resp = await get_stock_analysis(sym)
         analysis = analysis_resp.get("data") if isinstance(analysis_resp, dict) else None
         if not analysis:
             raise HTTPException(404, f"No data for {sym}")
-        text = await generate_stock_insight_text(sym, analysis)
+        text = await generate_stock_insight_text(sym, analysis, options)
         if not text:
             raise HTTPException(500, "Empty response from AI")
         db = SessionLocal()
@@ -442,7 +444,7 @@ async def post_stock_insight(symbol: str):
                 insight_type=STOCK_INSIGHT,
                 insight_text=text,
                 symbol=sym,
-                extra_data={"model": settings.claude_model_fast},
+                extra_data={"model": settings.claude_model_fast, "options": options or {}},
             )
             db.add(row)
             db.commit()
@@ -451,6 +453,7 @@ async def post_stock_insight(symbol: str):
                 "insight_type": STOCK_INSIGHT,
                 "symbol": sym,
                 "generated_at": row.generated_at.isoformat(),
+                "extra_data": row.extra_data,
             }
         finally:
             db.close()
@@ -481,6 +484,7 @@ async def get_stock_insight_latest(symbol: str):
             "insight_type": row.insight_type,
             "symbol": sym,
             "generated_at": row.generated_at.isoformat(),
+            "extra_data": row.extra_data,
         }
     finally:
         db.close()
