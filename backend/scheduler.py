@@ -186,7 +186,15 @@ class IngestionScheduler:
                     "close": float(item["previousClose"]) if item.get("previousClose") else (
                         float(item["close"]) if item.get("close") else None),
                     "change": float(
-                        item.get("change") or item.get("pointChange") or 0
+                        item.get("change") or item.get("pointChange") or
+                        # Compute from previousClose × percentageChange when pointChange is absent
+                        (
+                            (float(item.get("previousClose") or 0) *
+                             float(item.get("percentageChange") or item.get("changePercent") or 0) / 100)
+                            if item.get("previousClose") and
+                               (item.get("percentageChange") or item.get("changePercent"))
+                            else 0
+                        )
                     ),
                     "change_percent": float(
                         item.get("percentageChange") or item.get("changePercent") or 0
@@ -342,7 +350,7 @@ class IngestionScheduler:
                         "change": float(s.get("change") or 0),
                         "changePct": float(s.get("perChange") or s.get("changePercent") or 0),
                     })
-                cache.set("sectors", make_envelope(normalized, "live"), ttl=300)
+                cache.set("sectors", make_envelope(normalized, "live"), ttl=300)  # 5 min
                 # Persist intraday sector time-series (5-min resolution for multi-day charts)
                 now_ts = datetime.now(timezone.utc)
                 for row in normalized:
@@ -367,6 +375,7 @@ class IngestionScheduler:
                     db.execute(stmt)
 
             # --- Top Gainers ---
+            # NepseAPI uses "percentageChange" (not "changePercent"/"perChange")
             if isinstance(top_gainers, list) and top_gainers:
                 normalized_g = []
                 for i, s in enumerate(top_gainers[:20]):
@@ -375,16 +384,25 @@ class IngestionScheduler:
                         "symbol": s.get("symbol", ""),
                         "ltp": float(s.get("ltp") or s.get("lastTradedPrice") or 0),
                         "change": float(s.get("change") or s.get("pointChange") or 0),
-                        "changePct": float(s.get("changePercent") or s.get("pctChange") or s.get("perChange") or 0),
+                        "changePct": float(
+                            s.get("percentageChange") or s.get("changePercent") or
+                            s.get("pctChange") or s.get("perChange") or 0
+                        ),
                         "turnover": float(s.get("turnover") or 0),
                     })
-                cache.set("top_gainers", make_envelope(normalized_g, "live"), ttl=60)
+                cache.set("top_gainers", make_envelope(normalized_g, "live"), ttl=300)
+                # Upsert (not ignore) so intraday rank/price/pct updates overwrite stale rows
                 stmt = pg_insert(DailyTopMover).values([
                     dict(date=today, category="gainer", rank=r["rank"], symbol=r["symbol"],
                          ltp=r["ltp"], change=r["change"], change_pct=r["changePct"], turnover=r["turnover"])
                     for r in normalized_g
                 ])
-                stmt = stmt.on_conflict_do_nothing(constraint="uq_mover_date_category_rank")
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_mover_date_category_rank",
+                    set_={"symbol": stmt.excluded.symbol, "ltp": stmt.excluded.ltp,
+                          "change": stmt.excluded.change, "change_pct": stmt.excluded.change_pct,
+                          "turnover": stmt.excluded.turnover},
+                )
                 db.execute(stmt)
 
             # --- Top Losers ---
@@ -396,16 +414,24 @@ class IngestionScheduler:
                         "symbol": s.get("symbol", ""),
                         "ltp": float(s.get("ltp") or s.get("lastTradedPrice") or 0),
                         "change": float(s.get("change") or s.get("pointChange") or 0),
-                        "changePct": float(s.get("changePercent") or s.get("pctChange") or s.get("perChange") or 0),
+                        "changePct": float(
+                            s.get("percentageChange") or s.get("changePercent") or
+                            s.get("pctChange") or s.get("perChange") or 0
+                        ),
                         "turnover": float(s.get("turnover") or 0),
                     })
-                cache.set("top_losers", make_envelope(normalized_l, "live"), ttl=60)
+                cache.set("top_losers", make_envelope(normalized_l, "live"), ttl=300)
                 stmt = pg_insert(DailyTopMover).values([
                     dict(date=today, category="loser", rank=r["rank"], symbol=r["symbol"],
                          ltp=r["ltp"], change=r["change"], change_pct=r["changePct"], turnover=r["turnover"])
                     for r in normalized_l
                 ])
-                stmt = stmt.on_conflict_do_nothing(constraint="uq_mover_date_category_rank")
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_mover_date_category_rank",
+                    set_={"symbol": stmt.excluded.symbol, "ltp": stmt.excluded.ltp,
+                          "change": stmt.excluded.change, "change_pct": stmt.excluded.change_pct,
+                          "turnover": stmt.excluded.turnover},
+                )
                 db.execute(stmt)
 
             # --- Top Turnover ---
@@ -418,19 +444,24 @@ class IngestionScheduler:
                         "ltp": float(s.get("ltp") or s.get("closingPrice") or 0),
                         "turnover": float(s.get("turnover") or 0),
                     })
-                cache.set("top_turnover", make_envelope(normalized_t, "live"), ttl=60)
+                cache.set("top_turnover", make_envelope(normalized_t, "live"), ttl=300)
                 stmt = pg_insert(DailyTopMover).values([
                     dict(date=today, category="turnover", rank=r["rank"], symbol=r["symbol"],
                          ltp=r["ltp"], change=None, change_pct=None, turnover=r["turnover"])
                     for r in normalized_t
                 ])
-                stmt = stmt.on_conflict_do_nothing(constraint="uq_mover_date_category_rank")
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_mover_date_category_rank",
+                    set_={"symbol": stmt.excluded.symbol, "ltp": stmt.excluded.ltp,
+                          "turnover": stmt.excluded.turnover},
+                )
                 db.execute(stmt)
 
             # --- Market Breadth (derived from live_market) ---
+            # NepseAPI LiveMarket uses "percentageChange" not "change"
             if isinstance(live_market, list) and live_market:
-                advances = sum(1 for s in live_market if (s.get("change") or 0) > 0)
-                declines = sum(1 for s in live_market if (s.get("change") or 0) < 0)
+                advances = sum(1 for s in live_market if (s.get("percentageChange") or s.get("change") or 0) > 0)
+                declines = sum(1 for s in live_market if (s.get("percentageChange") or s.get("change") or 0) < 0)
                 unchanged = len(live_market) - advances - declines
                 total = len(live_market)
                 ad_ratio = round(advances / declines, 2) if declines > 0 else None
@@ -441,7 +472,7 @@ class IngestionScheduler:
                     "total": total,
                     "adRatio": ad_ratio,
                 }
-                cache.set("breadth", make_envelope(breadth, "live"), ttl=60)
+                cache.set("breadth", make_envelope(breadth, "live"), ttl=300)  # 5 min
                 stmt = pg_insert(DailyMarketBreadth).values(
                     date=today, advances=advances, declines=declines,
                     unchanged=unchanged, total=total, ad_ratio=ad_ratio,
@@ -450,9 +481,21 @@ class IngestionScheduler:
                 db.execute(stmt)
 
             # --- Market Overview (cache only, DB handled by ingest_market_summary) ---
-            if not isinstance(nepse_index_raw, Exception) and isinstance(nepse_index_raw, list):
+            # NepseAPI /NepseIndex returns a dict keyed by index name, not a list.
+            # Handle both formats.
+            def _extract_indices_from_raw(raw) -> list:
+                if isinstance(raw, Exception):
+                    return []
+                if isinstance(raw, list):
+                    return raw
+                if isinstance(raw, dict):
+                    return list(raw.values())
+                return []
+
+            nepse_index_entries = _extract_indices_from_raw(nepse_index_raw)
+            if nepse_index_entries:
                 indices = []
-                for entry in nepse_index_raw:
+                for entry in nepse_index_entries:
                     indices.append({
                         "name": entry.get("index") or entry.get("indexName") or "",
                         "value": float(entry.get("currentValue") or entry.get("value") or 0),
@@ -461,10 +504,21 @@ class IngestionScheduler:
                     })
                 summary_dict = {}
                 if not isinstance(summary_raw, Exception) and isinstance(summary_raw, dict):
+                    # NepseAPI /Summary uses space-separated keys with colons:
+                    # "Total Turnover Rs:", "Total Traded Shares", "Total Transactions"
                     summary_dict = {
-                        "totalTurnover": float(summary_raw.get("totalTurnover") or 0),
-                        "totalShares": int(summary_raw.get("totalTradedShares") or 0),
-                        "totalTransactions": int(summary_raw.get("totalTransactions") or 0),
+                        "totalTurnover": float(
+                            summary_raw.get("Total Turnover Rs:") or
+                            summary_raw.get("totalTurnover") or 0
+                        ),
+                        "totalShares": int(
+                            summary_raw.get("Total Traded Shares") or
+                            summary_raw.get("totalTradedShares") or 0
+                        ),
+                        "totalTransactions": int(
+                            summary_raw.get("Total Transactions") or
+                            summary_raw.get("totalTransactions") or 0
+                        ),
                     }
                 overview = {
                     "isOpen": True,
@@ -472,7 +526,7 @@ class IngestionScheduler:
                     "summary": summary_dict,
                     "lastUpdated": datetime.now(timezone.utc).isoformat(),
                 }
-                cache.set("market_overview", make_envelope(overview, "live"), ttl=60)
+                cache.set("market_overview", make_envelope(overview, "live"), ttl=300)  # 5 min
 
             db.commit()
             logger.info("Market snapshot ingested: sectors/breadth/movers cached + persisted")

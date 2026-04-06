@@ -90,7 +90,7 @@ export default function SectorPerformance({ isOpen, range, interval = '1min' }: 
   // Sparkline view: 1D range OR sub-daily interval on multi-day range
   if (interval !== '1D') {
     return (
-      <div className="grid grid-cols-1 gap-1 overflow-y-auto">
+      <div className="grid grid-cols-1 gap-1 overflow-y-auto h-full">
         {sectors.map(s => {
           const pts = intraday[s.name] ?? []
           const color = s.changePct >= 0 ? UP : DOWN

@@ -194,12 +194,21 @@ class NepseAPIProvider(DataProvider):
             raise
 
     async def get_sub_indices(self) -> List[Dict[str, Any]]:
-        """Fetch sector sub-indices."""
+        """Fetch sector sub-indices.
+
+        NepseAPI /NepseSubIndices returns a dict keyed by index name:
+          {"Development Bank Index": {id, index, change, perChange, currentValue}, ...}
+        Convert to a flat list so callers don't need to know the wire format.
+        """
         try:
             response = await self.client.get(f"{self.base_url}/NepseSubIndices")
             response.raise_for_status()
             data = response.json()
-            return data if isinstance(data, list) else []
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                return list(data.values())
+            return []
         except httpx.HTTPError as e:
             logger.error(f"NepseAPI sub_indices failed: {e}")
             raise

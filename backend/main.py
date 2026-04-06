@@ -673,13 +673,26 @@ async def get_market_overview():
     if cached:
         return cached
 
-    # DB fallback: latest market summary row
+    # DB fallback: latest market summary row.
+    # Determine isOpen by checking NEPSE trading hours (10:45 AM – 3:00 PM NPT, Sun–Thu).
+    # NPT is UTC+5:45.
+    from datetime import time as dtime
+    import zoneinfo
+    npt = zoneinfo.ZoneInfo("Asia/Kathmandu")
+    now_npt = datetime.now(npt)
+    weekday = now_npt.weekday()  # Mon=0 … Sun=6; NEPSE trades Sun(6)–Thu(3)
+    t = now_npt.time()
+    market_open_time  = dtime(10, 45)
+    market_close_time = dtime(15, 0)
+    is_trading_day = weekday in (6, 0, 1, 2, 3)  # Sun, Mon, Tue, Wed, Thu
+    is_open = is_trading_day and market_open_time <= t <= market_close_time
+
     db = SessionLocal()
     try:
         row = db.query(MarketSummary).order_by(MarketSummary.time.desc()).first()
         if row:
             data = {
-                "isOpen": False,
+                "isOpen": is_open,
                 "indices": [
                     {"name": "NEPSE", "value": row.nepse_index, "change": row.nepse_change, "changePct": row.nepse_change_pct},
                 ],
@@ -1239,45 +1252,65 @@ async def get_stock_analysis(symbol: str):
         if not rows:
             return make_envelope(None, "db")
 
-        # Build arrays
-        closes  = [r.ltp for r in rows]
-        highs   = [r.high  if r.high  is not None else r.ltp for r in rows]
-        lows    = [r.low   if r.low   is not None else r.ltp for r in rows]
-        volumes = [r.volume   or 0 for r in rows]
-        turnovers = [r.turnover or 0 for r in rows]
-        dates   = [r.time.date().isoformat() for r in rows]
+        # Separate backfill (one row per trading day) from live intraday ("rest" source).
+        # Only backfill rows are used for daily technical indicators (SMA, RSI, MACD, etc.)
+        # because mixing intraday ticks would corrupt multi-period calculations.
+        # The latest live row (if any, ltp > 0) is used for the current price.
+        backfill_rows = [r for r in rows if r.source == "backfill"]
+        live_rows     = [r for r in rows if r.source != "backfill" and r.ltp and r.ltp > 0]
 
-        ltp = closes[-1]
-        prev_close = closes[-2] if len(closes) >= 2 else None
+        # Use backfill for daily data arrays; fall back to all valid rows if no backfill
+        daily_rows = backfill_rows if backfill_rows else [r for r in rows if r.ltp and r.ltp > 0]
+        if not daily_rows:
+            return make_envelope(None, "db")
 
-        # Use DB change fields if available (live data), else compute from closes
-        last_row = rows[-1]
-        change_val = last_row.change if last_row.change is not None else (
-            round(ltp - prev_close, 2) if prev_close else None
+        closes  = [r.ltp for r in daily_rows]
+        highs   = [r.high if r.high  and r.high  > 0 else r.ltp for r in daily_rows]
+        lows    = [r.low  if r.low   and r.low   > 0 else r.ltp for r in daily_rows]
+        volumes = [r.volume   or 0 for r in daily_rows]
+        turnovers = [r.turnover or 0 for r in daily_rows]
+        dates   = [r.time.date().isoformat() for r in daily_rows]
+
+        # Current price: prefer latest live row, else last backfill row
+        latest_row = live_rows[-1] if live_rows else daily_rows[-1]
+        ltp = latest_row.ltp
+
+        # Previous close = last backfill daily close (the close price of the prior trading day)
+        prev_close = closes[-1] if (live_rows and closes) else (closes[-2] if len(closes) >= 2 else None)
+
+        # Prefer DB change_percent (NepseAPI provides this reliably via percentageChange).
+        # The point change field is often 0 in live data (NepseAPI LiveMarket omits pointChange),
+        # so compute it from ltp and prevClose when the stored value is 0.
+        change_pct = latest_row.change_percent if latest_row.change_percent is not None else (
+            round(((ltp - prev_close) / prev_close) * 100, 2)
+            if prev_close and prev_close > 0 else None
         )
-        change_pct = last_row.change_percent if last_row.change_percent is not None else (
-            round(((ltp - prev_close) / prev_close) * 100, 2) if prev_close else None
-        )
+        if latest_row.change and latest_row.change != 0:
+            change_val = latest_row.change
+        elif prev_close:
+            change_val = round(ltp - prev_close, 2)
+        else:
+            change_val = None
 
-        # --- 52W metrics ---
+        # --- 52W metrics — use daily rows only (backfill has correct daily OHLCV) ---
         now = datetime.now(timezone.utc)
         cutoff_1y = now - timedelta(days=365)
-        rows_1y = [r for r in rows if r.time >= cutoff_1y]
-        closes_1y = [r.ltp for r in rows_1y]
-        highs_1y  = [r.high or r.ltp for r in rows_1y]
-        lows_1y   = [r.low  or r.ltp for r in rows_1y]
+        rows_1y = [r for r in daily_rows if r.time >= cutoff_1y]
+        highs_1y = [r.high if r.high and r.high > 0 else r.ltp for r in rows_1y]
+        lows_1y  = [r.low  if r.low  and r.low  > 0 else r.ltp for r in rows_1y]
 
         high52w = max(highs_1y) if highs_1y else max(highs)
         low52w  = min(lows_1y)  if lows_1y  else min(lows)
         all_time_high = max(highs)
         range_pos = round((ltp - low52w) / (high52w - low52w), 3) if high52w != low52w else 0.5
 
-        # --- Period returns (trading days in lists) ---
+        # --- Period returns (backfill daily closes + today's live ltp as final point) ---
         # Map approximate calendar days → list index lookback
+        combined_closes = closes + ([ltp] if live_rows else [])
         lookbacks = {"1d": 1, "5d": 5, "1m": 22, "3m": 66, "6m": 132, "1y": 220}
-        returns = {k: period_return(closes, v) for k, v in lookbacks.items()}
+        returns = {k: period_return(combined_closes, v) for k, v in lookbacks.items()}
 
-        # --- Technical indicators ---
+        # --- Technical indicators (daily closes only for accurate multi-period TA) ---
         sma20  = sma(closes, 20)
         sma50  = sma(closes, 50)
         sma200 = sma(closes, 200)
@@ -1295,10 +1328,13 @@ async def get_stock_analysis(symbol: str):
         bb_series     = bollinger_series(closes, dates, 20)
 
         # --- Volume analytics ---
-        vol_latest = volumes[-1] if volumes else None
+        # Use today's volume from the latest live row (intraday cumulative) if available,
+        # otherwise fall back to the last backfill row.
+        vol_latest = (latest_row.volume or 0) if latest_row.volume else (volumes[-1] if volumes else None)
         avg20d_vol  = round(sum(volumes[-20:]) / min(len(volumes), 20), 0) if volumes else None
         avg90d_vol  = round(sum(volumes[-90:]) / min(len(volumes), 90), 0) if volumes else None
         vol_ratio   = round(vol_latest / avg20d_vol, 2) if avg20d_vol and avg20d_vol > 0 else None
+        avg_turnover = latest_row.turnover if (live_rows and latest_row.turnover) else (turnovers[-1] if turnovers else None)
         avg_turnover20d = round(sum(turnovers[-20:]) / min(len(turnovers), 20), 0) if turnovers else None
 
         # --- Volatility ---
