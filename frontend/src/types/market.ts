@@ -143,6 +143,18 @@ export type SectorIntradayData = Record<string, IntradayPoint[]>
 
 export type FreshnessState = 'fresh' | 'aging' | 'stale'
 
+export interface StockInsight {
+  insight_text: string
+  insight_type: string
+  symbol: string
+  generated_at: string
+}
+
+export interface StockChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface StockAnalysis {
   symbol: string
   name: string | null

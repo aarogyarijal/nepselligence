@@ -5,7 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Body, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
@@ -419,6 +419,90 @@ async def admin_run_generate_insight(type: str = "daily_close"):
         return {"ok": True, "action": "generate_ai_insight", "type": type}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/stocks/{symbol}/insight")
+async def post_stock_insight(symbol: str):
+    """Generate a Claude AI insight for a specific stock and persist it."""
+    from .ai_insights import generate_stock_insight_text, STOCK_INSIGHT
+    sym = symbol.upper()
+    try:
+        analysis_resp = await get_stock_analysis(sym)
+        analysis = analysis_resp.get("data") if isinstance(analysis_resp, dict) else None
+        if not analysis:
+            raise HTTPException(404, f"No data for {sym}")
+        text = await generate_stock_insight_text(sym, analysis)
+        if not text:
+            raise HTTPException(500, "Empty response from AI")
+        db = SessionLocal()
+        try:
+            row = AIInsight(
+                generated_at=datetime.now(timezone.utc),
+                insight_type=STOCK_INSIGHT,
+                insight_text=text,
+                symbol=sym,
+                extra_data={"model": settings.claude_model_fast},
+            )
+            db.add(row)
+            db.commit()
+            return {
+                "insight_text": text,
+                "insight_type": STOCK_INSIGHT,
+                "symbol": sym,
+                "generated_at": row.generated_at.isoformat(),
+            }
+        finally:
+            db.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Stock insight error for {sym}: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/stocks/{symbol}/insight/latest")
+async def get_stock_insight_latest(symbol: str):
+    """Get the most recent saved AI insight for a specific stock."""
+    from .ai_insights import STOCK_INSIGHT
+    sym = symbol.upper()
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(AIInsight)
+            .filter(AIInsight.symbol == sym, AIInsight.insight_type == STOCK_INSIGHT)
+            .order_by(AIInsight.generated_at.desc())
+            .first()
+        )
+        if not row:
+            return None
+        return {
+            "insight_text": row.insight_text,
+            "insight_type": row.insight_type,
+            "symbol": sym,
+            "generated_at": row.generated_at.isoformat(),
+        }
+    finally:
+        db.close()
+
+
+@app.post("/api/stocks/{symbol}/chat")
+async def post_stock_chat(symbol: str, body: dict = Body(...)):
+    """Conversational AI about a specific stock. Caller sends full message history."""
+    from .ai_insights import stock_chat_turn
+    sym = symbol.upper()
+    messages = body.get("messages", [])
+    if not messages:
+        raise HTTPException(400, "messages required")
+    try:
+        analysis_resp = await get_stock_analysis(sym)
+        analysis = analysis_resp.get("data") if isinstance(analysis_resp, dict) else {}
+        response = await stock_chat_turn(sym, analysis or {}, messages)
+        return {"response": response}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Stock chat error for {sym}: {e}")
+        raise HTTPException(500, str(e))
 
 
 @app.get("/api/stocks/{symbol}/floorsheet")

@@ -15,6 +15,8 @@ import type {
   IntradayPoint,
   SectorIntradayData,
   StockChartResponse,
+  StockInsight,
+  StockChatMessage,
 } from '@/types/market'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
@@ -133,4 +135,40 @@ export async function fetchAdminStatus(): Promise<{
 export async function runAdminAction(endpoint: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${API_URL}${endpoint}`, { method: 'POST', mode: 'cors' })
   return res.json()
+}
+
+export async function fetchStockInsight(symbol: string): Promise<StockInsight | null> {
+  const res = await fetch(
+    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/insight/latest`,
+    { mode: 'cors' }
+  )
+  if (!res.ok) return null
+  return res.json()
+}
+
+export async function generateStockInsight(symbol: string): Promise<StockInsight> {
+  const res = await fetch(
+    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/insight`,
+    { method: 'POST', mode: 'cors' }
+  )
+  if (!res.ok) throw new Error(`Failed to generate insight: ${res.status}`)
+  return res.json()
+}
+
+export async function chatWithStock(
+  symbol: string,
+  messages: StockChatMessage[]
+): Promise<string> {
+  const res = await fetch(
+    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/chat`,
+    {
+      method: 'POST',
+      mode: 'cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+    }
+  )
+  if (!res.ok) throw new Error(`Chat failed: ${res.status}`)
+  const data = await res.json()
+  return data.response ?? ''
 }

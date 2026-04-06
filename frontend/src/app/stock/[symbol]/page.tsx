@@ -13,6 +13,7 @@ import VolatilityCard from '@/components/stock/VolatilityCard'
 import RelPerfCard from '@/components/stock/RelPerfCard'
 import FloorsheetCard from '@/components/stock/FloorsheetCard'
 import StockChartPanel from '@/components/stock/StockChartPanel'
+import StockAIPanel from '@/components/stock/StockAIPanel'
 
 export default function StockPage() {
   const params = useParams()
@@ -84,33 +85,28 @@ export default function StockPage() {
           <StockChartPanel symbol={symbol} />
         </div>
 
-        {/* Row 1: Signals + Returns + Technicals */}
-        <div className="grid grid-cols-12 gap-6">
-          <div className="col-span-3">
+        {/* Row 1: [Signals + Returns stacked] | Technicals */}
+        <div className="grid grid-cols-12 gap-6 items-start">
+          <div className="col-span-4 flex flex-col gap-6">
             <SignalsCard signals={analysis.signals} />
-          </div>
-          <div className="col-span-3">
             <ReturnsCard returns={analysis.returns} />
           </div>
-          <div className="col-span-6">
+          <div className="col-span-8">
             <TechnicalsCard technicals={analysis.technicals} />
           </div>
         </div>
 
         {/* Row 2: Volume + Volatility + RelPerf */}
-        <div className="grid grid-cols-12 gap-6">
-          <div className="col-span-4">
-            <VolumeCard volume={analysis.volume} />
-          </div>
-          <div className="col-span-4">
-            <VolatilityCard volatility={analysis.volatility} />
-          </div>
-          <div className="col-span-4">
-            <RelPerfCard relativePerformance={analysis.relativePerformance} />
-          </div>
+        <div className="grid grid-cols-3 gap-6">
+          <VolumeCard volume={analysis.volume} />
+          <VolatilityCard volatility={analysis.volatility} />
+          <RelPerfCard relativePerformance={analysis.relativePerformance} />
         </div>
 
-        {/* Row 3: Floorsheet (conditional) */}
+        {/* Row 3: AI Analysis + Chat */}
+        <StockAIPanel symbol={symbol} />
+
+        {/* Row 4: Floorsheet (conditional) */}
         {analysis.floorsheet && (
           <FloorsheetCard floorsheet={analysis.floorsheet} />
         )}

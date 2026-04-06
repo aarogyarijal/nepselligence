@@ -260,3 +260,115 @@ async def generate_insight(db: Session, provider_manager, insight_type: str) -> 
 # Backward-compatible alias used by existing scheduler job
 async def generate_market_insight(db: Session, provider_manager) -> None:
     await generate_insight(db, provider_manager, DAILY_CLOSE)
+
+
+STOCK_INSIGHT = "stock_insight"
+
+
+def _build_stock_insight_prompt(symbol: str, analysis: dict) -> str:
+    """Build prompt for stock-specific one-shot analysis."""
+    p = analysis.get("price") or {}
+    r = analysis.get("returns") or {}
+    t = analysis.get("technicals") or {}
+    v = analysis.get("volume") or {}
+    vol = analysis.get("volatility") or {}
+    rp = analysis.get("relativePerformance") or {}
+    signals = analysis.get("signals") or {}
+
+    macd_d = t.get("macd") or {}
+    bb = t.get("bollingerBands") or {}
+    ltp = p.get("ltp", 0)
+    cpct = p.get("changePct", 0) or 0
+
+    def _f(val, dec=2):
+        return f"{val:.{dec}f}" if val is not None else "N/A"
+
+    return f"""You are a NEPSE stock analyst. Provide a data-driven analysis of {symbol} ({analysis.get('name', '')}, sector: {analysis.get('sector', '')}).
+
+<current_data>
+Price: Rs {_f(ltp)} ({'+' if cpct >= 0 else ''}{_f(cpct)}% today, prev close Rs {_f(p.get('prevClose'))})
+52W range: Rs {_f(p.get('low52w'))} – Rs {_f(p.get('high52w'))} (at {(p.get('rangePosition') or 0)*100:.0f}% of range)
+ATH: Rs {_f(p.get('allTimeHigh'))}
+
+Returns: 1D={_f(r.get('1d'))}%, 5D={_f(r.get('5d'))}%, 1M={_f(r.get('1m'))}%, 3M={_f(r.get('3m'))}%, 6M={_f(r.get('6m'))}%, 1Y={_f(r.get('1y'))}%
+
+Technicals:
+  RSI(14): {_f(t.get('rsi14'))}
+  MACD: {_f(macd_d.get('macd'))} / Signal: {_f(macd_d.get('signal'))} / Hist: {_f(macd_d.get('histogram'))}
+  Bollinger: {_f(bb.get('lower'))} | {_f(bb.get('middle'))} | {_f(bb.get('upper'))}
+  SMA20: Rs {_f(t.get('sma20'))}, SMA50: Rs {_f(t.get('sma50'))}, SMA200: Rs {_f(t.get('sma200'))}
+  EMA12: Rs {_f(t.get('ema12'))}, EMA26: Rs {_f(t.get('ema26'))}, ATR(14): Rs {_f(t.get('atr14'))}
+
+Volume: Today={v.get('latest')}, 20D avg={_f(v.get('avg20d'), 0)}, ratio={_f(v.get('volumeRatio'))}x
+Volatility: Daily(30D)={_f((vol.get('daily30d') or 0)*100)}%, Annualized={_f((vol.get('annualized30d') or 0)*100)}%
+vs NEPSE(30D): Stock={_f(rp.get('stockReturn30d'))}%, NEPSE={_f(rp.get('nepseReturn30d'))}%, Alpha={_f(rp.get('alpha30d'))}%
+
+Signals: Trend={signals.get('trend')}, Momentum={signals.get('momentum')}, Volume={signals.get('volumeTrend')}, vs SMA={signals.get('priceVsSMA')}
+</current_data>
+
+Write a concise analysis in plain text (no markdown, no code fences) with exactly 3 sections:
+
+1. SUMMARY: Two sentences on the stock's current technical position and key level to watch.
+2. SIGNALS: Two to three specific technical observations — what RSI, MACD, Bollinger, and the SMA stack say about near-term direction.
+3. ANOMALIES: Any standout observations — unusual volume, volatility, price vs MA divergence, or notable return patterns.
+
+Under 200 words total. Be specific with price levels and percentages."""
+
+
+def _build_stock_system_prompt(symbol: str, analysis: dict) -> str:
+    """Build system message for conversational stock chat."""
+    import json
+    slim = {k: v for k, v in analysis.items() if k not in ("history", "overlays")}
+    return f"""You are a NEPSE stock analyst assistant. The user is analyzing {symbol} ({analysis.get('name', '')}, sector: {analysis.get('sector', '')}).
+
+You have the following current market data for this stock:
+
+{json.dumps(slim, indent=2)}
+
+Guidelines:
+- Answer directly and specifically using the numbers above
+- Under 150 words unless the question genuinely requires more detail
+- Plain text only, no markdown formatting
+- For buy/sell questions: frame in terms of technical signals and risk levels, not as personal financial advice
+- If asked about data not in the context, say so rather than guessing"""
+
+
+async def generate_stock_insight_text(symbol: str, analysis: dict) -> str:
+    """Generate a Claude insight for a specific stock. Returns raw text."""
+    if not settings.claude_api_key:
+        raise RuntimeError("CLAUDE_API_KEY not configured")
+
+    prompt = _build_stock_insight_prompt(symbol, analysis)
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=settings.claude_api_key)
+        message = client.messages.create(
+            model=settings.claude_model_fast,
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = message.content[0].text if message.content else ""
+        return _strip_code_fences(raw)
+    except ImportError:
+        raise RuntimeError("anthropic package not installed")
+
+
+async def stock_chat_turn(symbol: str, analysis: dict, messages: list[dict]) -> str:
+    """Generate a single conversational reply about a stock."""
+    if not settings.claude_api_key:
+        raise RuntimeError("CLAUDE_API_KEY not configured")
+
+    system = _build_stock_system_prompt(symbol, analysis)
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=settings.claude_api_key)
+        message = client.messages.create(
+            model=settings.claude_model_fast,
+            max_tokens=400,
+            system=system,
+            messages=messages,
+        )
+        raw = message.content[0].text if message.content else ""
+        return _strip_code_fences(raw)
+    except ImportError:
+        raise RuntimeError("anthropic package not installed")
