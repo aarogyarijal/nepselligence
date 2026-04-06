@@ -30,14 +30,15 @@ class IngestionScheduler:
         logger.info("Starting scheduler...")
 
         # NEPSE market days: Sun-Thu (Nepal trades Sun through Thu)
-        # Market hours: 11 AM - 3 PM NPT
+        # Market hours: 11 AM - 3 PM NPT — fires every 5 minutes (matches NepseAPI 10-min cache TTL)
         market_trigger = CronTrigger(
             hour="11-15",
+            minute="*/5",
             day_of_week="0-3,6",  # Mon-Thu (0-3) + Sun (6) = NEPSE trading days
             timezone=settings.scheduler_timezone,
         )
 
-        # Market snapshot job: runs every 60s during market hours (sectors, breadth, movers)
+        # Market snapshot job: every 5 min during market hours (sectors, breadth, movers)
         self.scheduler.add_job(
             self.ingest_market_snapshot,
             market_trigger,
@@ -48,7 +49,7 @@ class IngestionScheduler:
             misfire_grace_time=300,
         )
 
-        # Live prices job: runs every minute during market hours
+        # Live prices job: every 5 min during market hours
         self.scheduler.add_job(
             self.ingest_live_prices,
             market_trigger,
@@ -59,14 +60,10 @@ class IngestionScheduler:
             misfire_grace_time=300,
         )
 
-        # Market summary + NEPSE index job: runs alongside live prices
+        # Market summary + NEPSE index job: same 5-min cadence
         self.scheduler.add_job(
             self.ingest_market_summary,
-            CronTrigger(
-                hour="11-15",
-                day_of_week="0-3,6",  # Mon-Thu (0-3) + Sun (6) = NEPSE trading days
-                timezone=settings.scheduler_timezone,
-            ),
+            market_trigger,
             id="ingest_market_summary",
             name="Ingest NEPSE index + market summary",
             max_instances=settings.scheduler_max_instances,
@@ -74,17 +71,60 @@ class IngestionScheduler:
             misfire_grace_time=300,
         )
 
-        # AI insights: run at market close (3:15 PM NPT) each trading day
+        # AI insights — market open briefing (11:05 AM NPT)
+        self.scheduler.add_job(
+            self.generate_ai_open_briefing,
+            CronTrigger(
+                hour="11", minute="5",
+                day_of_week="0-3,6",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="generate_ai_open",
+            name="Generate AI market open briefing",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
+
+        # AI insights — hourly mid-session update (12:15, 13:15, 14:15 NPT)
+        self.scheduler.add_job(
+            self.generate_ai_hourly,
+            CronTrigger(
+                hour="12-14", minute="15",
+                day_of_week="0-3,6",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="generate_ai_hourly",
+            name="Generate AI hourly market update",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
+
+        # AI insights — daily close summary (3:15 PM NPT)
         self.scheduler.add_job(
             self.generate_ai_insight,
             CronTrigger(
-                hour="15",
-                minute="15",
-                day_of_week="0-3,6",  # Mon-Thu (0-3) + Sun (6) = NEPSE trading days
+                hour="15", minute="15",
+                day_of_week="0-3,6",
                 timezone=settings.scheduler_timezone,
             ),
             id="generate_ai_insight",
-            name="Generate AI market insight",
+            name="Generate AI daily close insight",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
+
+        # AI insights — weekly wrap (Thursday 3:30 PM NPT = day_of_week=3)
+        self.scheduler.add_job(
+            self.generate_ai_weekly,
+            CronTrigger(
+                day_of_week="3", hour="15", minute="30",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="generate_ai_weekly",
+            name="Generate AI weekly wrap",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=600,
@@ -405,14 +445,47 @@ class IngestionScheduler:
         finally:
             db.close()
 
-    async def generate_ai_insight(self):
-        """Generate AI market insight at close of trading day."""
+    async def generate_ai_open_briefing(self):
+        """Generate market open briefing at 11:05 AM NPT."""
         db = self.db_session_factory()
         try:
-            from .ai_insights import generate_market_insight
-            await generate_market_insight(db, self.provider_manager)
+            from .ai_insights import generate_insight, MARKET_OPEN
+            await generate_insight(db, self.provider_manager, MARKET_OPEN)
         except Exception as e:
-            logger.error(f"AI insight generation failed: {e}")
+            logger.error(f"AI open briefing failed: {e}")
+        finally:
+            db.close()
+
+    async def generate_ai_hourly(self):
+        """Generate hourly mid-session update."""
+        db = self.db_session_factory()
+        try:
+            from .ai_insights import generate_insight, HOURLY
+            await generate_insight(db, self.provider_manager, HOURLY)
+        except Exception as e:
+            logger.error(f"AI hourly insight failed: {e}")
+        finally:
+            db.close()
+
+    async def generate_ai_insight(self):
+        """Generate AI daily close insight at 3:15 PM NPT."""
+        db = self.db_session_factory()
+        try:
+            from .ai_insights import generate_insight, DAILY_CLOSE
+            await generate_insight(db, self.provider_manager, DAILY_CLOSE)
+        except Exception as e:
+            logger.error(f"AI daily close insight failed: {e}")
+        finally:
+            db.close()
+
+    async def generate_ai_weekly(self):
+        """Generate weekly wrap on Thursday at 3:30 PM NPT."""
+        db = self.db_session_factory()
+        try:
+            from .ai_insights import generate_insight, WEEKLY_WRAP
+            await generate_insight(db, self.provider_manager, WEEKLY_WRAP)
+        except Exception as e:
+            logger.error(f"AI weekly wrap failed: {e}")
         finally:
             db.close()
 

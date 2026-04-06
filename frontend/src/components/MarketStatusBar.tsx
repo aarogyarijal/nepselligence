@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { fetchMarketOverview } from '@/lib/api'
+import { fetchMarketOverview, fetchCompanies } from '@/lib/api'
 import { formatPrice, formatChange, formatChangePct, changeClass, changeArrow } from '@/lib/format'
 import { usePolling } from '@/hooks/usePolling'
 import type { MarketOverview, Company } from '@/types/market'
@@ -30,9 +30,7 @@ export default function MarketStatusBar({ onSymbolSearch, isOpen }: MarketStatus
 
   // Load companies for autocomplete
   useEffect(() => {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
-    fetch(`${API_URL}/api/market/companies`, { mode: 'cors' })
-      .then(r => r.json())
+    fetchCompanies()
       .then(envelope => setAllCompanies(envelope.data || []))
       .catch(() => {})
   }, [])

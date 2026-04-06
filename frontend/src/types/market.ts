@@ -77,10 +77,22 @@ export interface Company {
   name: string
 }
 
+export type InsightType = 'market_open' | 'hourly' | 'daily_close' | 'weekly_wrap'
+
 export interface AIInsight {
   insight_text: string
+  insight_type: InsightType
   generated_at: string
   extra_data?: Record<string, unknown>
+}
+
+export interface FloorsheetRow {
+  symbol: string
+  buyer: string
+  seller: string
+  quantity: number
+  rate: number
+  time: string
 }
 
 export type FreshnessState = 'fresh' | 'aging' | 'stale'

@@ -1,7 +1,7 @@
 """Database models for NEPSE market data."""
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, Float, String, DateTime, Date, UniqueConstraint, Index
+from sqlalchemy import Column, Integer, Float, String, Text, DateTime, Date, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
 
 from .database import Base
@@ -89,7 +89,8 @@ class AIInsight(Base):
 
     id = Column(Integer, primary_key=True)
     generated_at = Column(DateTime(timezone=True), nullable=False, index=True)
-    insight_text = Column(String(2000), nullable=False)
+    insight_type = Column(String(30), nullable=False, default="daily_close")  # market_open, hourly, daily_close, weekly_wrap
+    insight_text = Column(Text, nullable=False)
     symbol = Column(String(20))  # Null if market-wide insight
     extra_data = Column(JSONB)  # Any extra structured data
 

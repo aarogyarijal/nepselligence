@@ -13,9 +13,10 @@ interface TurnoverLeadersProps {
   isOpen: boolean
   range: TimeRange
   onSymbolClick: (symbol: string) => void
+  onFloorsheetClick?: (symbol: string) => void
 }
 
-export default function TurnoverLeaders({ isOpen, range, onSymbolClick }: TurnoverLeadersProps) {
+export default function TurnoverLeaders({ isOpen, range, onSymbolClick, onFloorsheetClick }: TurnoverLeadersProps) {
   const [leaders, setLeaders] = useState<TurnoverLeader[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -31,7 +32,7 @@ export default function TurnoverLeaders({ isOpen, range, onSymbolClick }: Turnov
   }, [range])
 
   useEffect(() => { setLoading(true); load() }, [load])
-  usePolling(load, 60_000, isOpen && range === '1D')
+  usePolling(load, 30_000, isOpen && range === '1D')
 
   if (loading) {
     return (
@@ -60,7 +61,12 @@ export default function TurnoverLeaders({ isOpen, range, onSymbolClick }: Turnov
         margin={{ top: 0, right: 60, left: 0, bottom: 0 }}
         onClick={(e) => {
           if (e?.activePayload?.[0]) {
-            onSymbolClick(e.activePayload[0].payload.symbol)
+            const sym = e.activePayload[0].payload.symbol
+            if (onFloorsheetClick) {
+              onFloorsheetClick(sym)
+            } else {
+              onSymbolClick(sym)
+            }
           }
         }}
       >
@@ -78,6 +84,7 @@ export default function TurnoverLeaders({ isOpen, range, onSymbolClick }: Turnov
           width={60}
           axisLine={false}
           tickLine={false}
+          onClick={(data) => { if (data?.value) onSymbolClick(String(data.value)) }}
         />
         <Tooltip
           formatter={(v: number) => [`Rs ${v.toFixed(2)} Cr`, 'Turnover']}

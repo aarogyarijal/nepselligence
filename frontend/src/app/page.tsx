@@ -13,6 +13,7 @@ import MarketBreadthWidget from '@/components/MarketBreadth'
 import AIPanel from '@/components/AIPanel'
 import AdminControls from '@/components/AdminControls'
 import WidgetShell from '@/components/WidgetShell'
+import FloorsheetModal from '@/components/FloorsheetModal'
 import { fetchMarketOverview } from '@/lib/api'
 import { usePolling } from '@/hooks/usePolling'
 
@@ -24,6 +25,7 @@ export default function Dashboard() {
   const [isOpen, setIsOpen] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
   const [range, setRange] = useState<TimeRange>('1D')
+  const [floorsheetSymbol, setFloorsheetSymbol] = useState<string | null>(null)
 
   const loadMarketStatus = async () => {
     try {
@@ -89,17 +91,17 @@ export default function Dashboard() {
           <div className="grid grid-cols-12 gap-6 mb-6">
             <div className="col-span-3">
               <WidgetShell title="Top Gainers" className="max-h-96 overflow-y-auto">
-                <TopGainers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} />
+                <TopGainers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
             <div className="col-span-3">
               <WidgetShell title="Top Losers" className="max-h-96 overflow-y-auto">
-                <TopLosers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} />
+                <TopLosers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
             <div className="col-span-6">
               <WidgetShell title="Turnover Leaders" className="h-96">
-                <TurnoverLeaders isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} />
+                <TurnoverLeaders isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
           </div>
@@ -122,6 +124,8 @@ export default function Dashboard() {
 
         {/* W10: Admin Controls (collapsed footer) */}
         <AdminControls />
+
+        <FloorsheetModal symbol={floorsheetSymbol} onClose={() => setFloorsheetSymbol(null)} />
       </div>
     </MarketStatusCtx.Provider>
   )

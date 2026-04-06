@@ -1,14 +1,21 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { fetchLatestInsight } from '@/lib/api'
+import { fetchLatestInsight, fetchInsightHistory } from '@/lib/api'
 import { useFreshness } from '@/hooks/useFreshness'
 import { usePolling } from '@/hooks/usePolling'
 import { formatNPT } from '@/lib/format'
-import type { AIInsight } from '@/types/market'
+import type { AIInsight, InsightType } from '@/types/market'
 
 type Tab = 'Summary' | 'Signals' | 'Anomalies'
 const TABS: Tab[] = ['Summary', 'Signals', 'Anomalies']
+
+const INSIGHT_TYPE_LABELS: Record<InsightType, string> = {
+  market_open: 'Market Open',
+  hourly: 'Hourly',
+  daily_close: 'Close',
+  weekly_wrap: 'Weekly',
+}
 
 interface ParsedInsight {
   summary: string
@@ -52,14 +59,20 @@ interface AIPanelProps {
 
 export default function AIPanel({ isOpen }: AIPanelProps) {
   const [insight, setInsight] = useState<AIInsight | null>(null)
+  const [history, setHistory] = useState<AIInsight[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('Summary')
+  const [showHistory, setShowHistory] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      const data = await fetchLatestInsight()
-      setInsight(data)
+      const [latest, hist] = await Promise.all([
+        fetchLatestInsight(),
+        fetchInsightHistory(8),
+      ])
+      setInsight(latest)
+      setHistory(hist)
       setError(false)
     } catch {
       setError(true)
@@ -69,7 +82,8 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
   }, [])
 
   useEffect(() => { load() }, [load])
-  usePolling(load, 300_000, true) // poll every 5 min regardless of market status
+  // Poll every 60s during market hours, 5 min otherwise
+  usePolling(load, isOpen ? 60_000 : 300_000, true)
 
   const freshness = useFreshness(insight?.generated_at, isOpen)
   const parsed = insight ? parseInsight(insight.insight_text) : null
@@ -83,6 +97,9 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
     return parsed.anomalies
   }
 
+  // History items excluding the currently displayed insight
+  const otherInsights = history.filter(h => h.generated_at !== insight?.generated_at)
+
   return (
     <div className="bg-slate-900 rounded-lg border border-slate-700 p-6 h-full flex flex-col">
       {/* Header */}
@@ -92,13 +109,52 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
           <span className="text-xs px-2 py-0.5 bg-blue-900/60 text-blue-300 rounded">
             Claude
           </span>
+          {insight?.insight_type && (
+            <span className="text-xs px-2 py-0.5 bg-slate-700 text-slate-300 rounded">
+              {INSIGHT_TYPE_LABELS[insight.insight_type] ?? insight.insight_type}
+            </span>
+          )}
         </div>
-        {freshness !== 'fresh' && insight && (
-          <span className={`text-xs ${freshness === 'aging' ? 'text-yellow-400' : 'text-slate-500'}`}>
-            {freshnessLabel(freshness, insight.generated_at)}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {freshness !== 'fresh' && insight && (
+            <span className={`text-xs ${freshness === 'aging' ? 'text-yellow-400' : 'text-slate-500'}`}>
+              {freshnessLabel(freshness, insight.generated_at)}
+            </span>
+          )}
+          {otherInsights.length > 0 && (
+            <button
+              onClick={() => setShowHistory(v => !v)}
+              className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+              title="Show insight history"
+            >
+              {showHistory ? 'Hide history' : `+${otherInsights.length} earlier`}
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* History dropdown */}
+      {showHistory && otherInsights.length > 0 && (
+        <div className="mb-3 shrink-0 border border-slate-700 rounded bg-slate-800/60 divide-y divide-slate-700/60">
+          {otherInsights.map(h => (
+            <button
+              key={h.generated_at}
+              onClick={() => { setInsight(h); setShowHistory(false) }}
+              className="w-full text-left px-3 py-2 hover:bg-slate-700/40 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-1.5 py-0.5 bg-slate-700 text-slate-400 rounded">
+                  {INSIGHT_TYPE_LABELS[h.insight_type] ?? h.insight_type}
+                </span>
+                <span className="text-xs text-slate-500">{formatNPT(h.generated_at)} NPT</span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 line-clamp-1">
+                {h.insight_text.slice(0, 120)}
+              </p>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Tabs */}
       {!loading && !error && hasSections && (

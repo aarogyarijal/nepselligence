@@ -10,6 +10,7 @@ import type {
   OHLCVPoint,
   Company,
   AIInsight,
+  FloorsheetRow,
   StockAnalysis,
 } from '@/types/market'
 
@@ -63,10 +64,30 @@ export async function fetchIndexHistory(range: string): Promise<{ time: string; 
   return res.json()
 }
 
-export async function fetchLatestInsight(): Promise<AIInsight | null> {
-  const res = await fetch(`${API_URL}/api/insights/latest`, { mode: 'cors' })
+export async function fetchLatestInsight(type?: string): Promise<AIInsight | null> {
+  const url = type
+    ? `${API_URL}/api/insights/latest?type=${type}`
+    : `${API_URL}/api/insights/latest`
+  const res = await fetch(url, { mode: 'cors' })
   if (!res.ok) return null
   return res.json()
+}
+
+export async function fetchInsightHistory(limit = 10): Promise<AIInsight[]> {
+  const res = await fetch(`${API_URL}/api/insights/history?limit=${limit}`, { mode: 'cors' })
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function fetchFloorsheet(symbol: string, limit = 200): Promise<FloorsheetRow[]> {
+  const res = await fetch(
+    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/floorsheet?limit=${limit}`,
+    { mode: 'cors' }
+  )
+  if (!res.ok) return []
+  const data = await res.json()
+  // endpoint returns ApiEnvelope or raw array
+  return Array.isArray(data) ? data : (data.data ?? [])
 }
 
 export async function fetchAdminStatus(): Promise<{

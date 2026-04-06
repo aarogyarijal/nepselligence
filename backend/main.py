@@ -206,20 +206,46 @@ async def get_index_history(range: str = Query(default="1D", regex="^(1D|5D|1M|3
 
 
 @app.get("/api/insights/latest")
-async def get_latest_insight():
-    """Get the most recent AI-generated market insight."""
+async def get_latest_insight(type: str = None):
+    """Get the most recent AI-generated market insight. Optional ?type= filter."""
     db = SessionLocal()
     try:
-        insight = db.query(AIInsight).order_by(
-            AIInsight.generated_at.desc()
-        ).first()
+        q = db.query(AIInsight).order_by(AIInsight.generated_at.desc())
+        if type:
+            q = q.filter(AIInsight.insight_type == type)
+        insight = q.first()
         if not insight:
             return None
         return {
             "insight_text": insight.insight_text,
+            "insight_type": insight.insight_type,
             "generated_at": insight.generated_at.isoformat(),
             "extra_data": insight.extra_data,
         }
+    finally:
+        db.close()
+
+
+@app.get("/api/insights/history")
+async def get_insight_history(limit: int = 10):
+    """Get recent AI insights in reverse chronological order."""
+    db = SessionLocal()
+    try:
+        insights = (
+            db.query(AIInsight)
+            .order_by(AIInsight.generated_at.desc())
+            .limit(min(limit, 50))
+            .all()
+        )
+        return [
+            {
+                "insight_text": i.insight_text,
+                "insight_type": i.insight_type,
+                "generated_at": i.generated_at.isoformat(),
+                "extra_data": i.extra_data,
+            }
+            for i in insights
+        ]
     finally:
         db.close()
 
@@ -270,13 +296,20 @@ async def admin_run_ingest_snapshot():
 
 
 @app.post("/api/admin/run/generate-insight")
-async def admin_run_generate_insight():
-    """Manually trigger AI insight generation."""
+async def admin_run_generate_insight(type: str = "daily_close"):
+    """Manually trigger AI insight generation. type: market_open, hourly, daily_close, weekly_wrap"""
     if scheduler is None:
         return {"ok": False, "error": "Scheduler not running"}
     try:
-        await scheduler.generate_ai_insight()
-        return {"ok": True, "action": "generate_ai_insight"}
+        if type == "market_open":
+            await scheduler.generate_ai_open_briefing()
+        elif type == "hourly":
+            await scheduler.generate_ai_hourly()
+        elif type == "weekly_wrap":
+            await scheduler.generate_ai_weekly()
+        else:
+            await scheduler.generate_ai_insight()
+        return {"ok": True, "action": "generate_ai_insight", "type": type}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

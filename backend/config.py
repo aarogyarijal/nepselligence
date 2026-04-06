@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # Claude API
     claude_api_key: str = ""
     claude_api_max_tokens: int = 2000
+    claude_model_fast: str = "claude-haiku-4-5-20251001"   # for market_open + hourly insights
+    claude_model_deep: str = "claude-sonnet-4-6"           # for daily_close + weekly_wrap
 
     # Server
     environment: str = "development"

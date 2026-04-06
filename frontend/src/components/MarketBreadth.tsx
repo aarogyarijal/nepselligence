@@ -27,7 +27,7 @@ export default function MarketBreadthWidget({ isOpen, range }: MarketBreadthProp
   }, [range])
 
   useEffect(() => { setLoading(true); load() }, [load])
-  usePolling(load, 60_000, isOpen && range === '1D')
+  usePolling(load, 30_000, isOpen && range === '1D')
 
   if (loading) {
     return (

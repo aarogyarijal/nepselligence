@@ -60,7 +60,7 @@ export default function IndexChart({ isOpen, range }: IndexChartProps) {
   }
 
   useEffect(() => { load() }, [range])
-  usePolling(load, 60_000, isOpen && range === '1D')
+  usePolling(load, 30_000, isOpen && range === '1D')
 
   const last = data[data.length - 1]
   const first = data[0]

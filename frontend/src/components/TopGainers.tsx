@@ -11,9 +11,10 @@ interface TopGainersProps {
   isOpen: boolean
   range: TimeRange
   onSymbolClick: (symbol: string) => void
+  onFloorsheetClick?: (symbol: string) => void
 }
 
-export default function TopGainers({ isOpen, range, onSymbolClick }: TopGainersProps) {
+export default function TopGainers({ isOpen, range, onSymbolClick, onFloorsheetClick }: TopGainersProps) {
   const [gainers, setGainers] = useState<TopMover[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -29,15 +30,16 @@ export default function TopGainers({ isOpen, range, onSymbolClick }: TopGainersP
   }, [range])
 
   useEffect(() => { setLoading(true); load() }, [load])
-  usePolling(load, 60_000, isOpen && range === '1D')
+  usePolling(load, 30_000, isOpen && range === '1D')
 
   return (
     <div>
-      <div className="grid grid-cols-5 gap-1 pb-2 mb-1 border-b border-slate-700 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+      <div className="grid grid-cols-6 gap-1 pb-2 mb-1 border-b border-slate-700 text-xs font-semibold text-slate-500 uppercase tracking-wider">
         <div>#</div>
         <div className="col-span-2">Symbol</div>
         <div className="text-right">LTP</div>
         <div className="text-right">%</div>
+        <div />
       </div>
 
       {loading ? (
@@ -53,20 +55,33 @@ export default function TopGainers({ isOpen, range, onSymbolClick }: TopGainersP
           {gainers.map((stock) => {
             const intensity = Math.min(stock.changePct / 10, 1)
             return (
-              <button
+              <div
                 key={stock.symbol}
-                onClick={() => onSymbolClick(stock.symbol)}
-                className="w-full grid grid-cols-5 gap-1 py-1.5 px-2 rounded text-xs hover:bg-slate-800 transition-colors text-left"
+                className="group grid grid-cols-6 gap-1 py-1.5 px-2 rounded text-xs hover:bg-slate-800 transition-colors"
                 style={{ backgroundColor: `rgba(22, 163, 74, ${intensity * 0.15})` }}
-                title={`View ${stock.symbol} detail`}
               >
-                <div className="text-slate-500">{stock.rank}</div>
-                <div className="col-span-2 font-semibold text-white">{stock.symbol}</div>
-                <div className="text-right text-slate-300">{formatPrice(stock.ltp)}</div>
-                <div className="text-right text-up font-medium">
+                <div className="text-slate-500 self-center">{stock.rank}</div>
+                <button
+                  onClick={() => onSymbolClick(stock.symbol)}
+                  className="col-span-2 font-semibold text-white text-left hover:text-blue-300 transition-colors"
+                  title={`View ${stock.symbol} analysis`}
+                >
+                  {stock.symbol}
+                </button>
+                <div className="text-right text-slate-300 self-center">{formatPrice(stock.ltp)}</div>
+                <div className="text-right text-up font-medium self-center">
                   ▲ {formatChangePct(stock.changePct)}
                 </div>
-              </button>
+                {onFloorsheetClick && (
+                  <button
+                    onClick={() => onFloorsheetClick(stock.symbol)}
+                    className="text-slate-600 hover:text-slate-300 transition-colors text-right opacity-0 group-hover:opacity-100"
+                    title={`View ${stock.symbol} floorsheet`}
+                  >
+                    ≡
+                  </button>
+                )}
+              </div>
             )
           })}
         </div>
