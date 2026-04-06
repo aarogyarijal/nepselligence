@@ -242,24 +242,30 @@ async def get_index_history(
                     )
                 return result
 
-        # Try real MarketSummary data first (exclude zero-index rows from failed ingests)
+        # Fetch real MarketSummary data (5-min snapshots during market hours)
         rows = db.query(MarketSummary).filter(
             MarketSummary.time >= cutoff,
             MarketSummary.nepse_index > 0,
         ).order_by(MarketSummary.time.asc()).all()
 
-        # Count distinct calendar dates covered
-        distinct_days = len({r.time.date() for r in rows})
-        use_real = distinct_days >= min_real_days[range]
+        eff_interval = interval or DEFAULT_INTERVAL[range]
+        int_min = INTERVAL_MINUTES.get(eff_interval, 5)
 
-        if use_real:
-            int_min = INTERVAL_MINUTES.get(interval or DEFAULT_INTERVAL[range], 5)
-            rows_iter = ((r.time, r.nepse_index) for r in rows if r.nepse_index > 0)
+        # For sub-daily intervals: use real 5-min market_summary snapshots whenever available.
+        # Even sparse data (1-2 days) is more accurate than the backfill proxy.
+        if rows and eff_interval != "1D":
+            rows_iter = ((r.time, r.nepse_index) for r in rows)
+            return _aggregate_timeseries(rows_iter, int_min)
+
+        # For 1D interval: prefer historical depth. Use real data only if we have
+        # enough calendar days; otherwise fall back to the backfill daily proxy.
+        distinct_days = len({r.time.date() for r in rows})
+        if rows and (distinct_days >= min_real_days[range] or eff_interval != "1D"):
+            rows_iter = ((r.time, r.nepse_index) for r in rows)
             return _aggregate_timeseries(rows_iter, int_min)
 
         # Fallback: derive a market proxy from daily average LTP across all backfilled stocks.
-        # Groups stock_prices by calendar date and averages LTP for each day.
-        # Not the real NEPSE index but shows real price movement from backfill data.
+        # Not the real NEPSE index but provides historical context when market_summary is sparse.
         result = db.execute(
             text("""
                 SELECT
@@ -276,14 +282,12 @@ async def get_index_history(
         ).fetchall()
 
         if not result:
-            # Return whatever valid MarketSummary rows we have (could be 0 or 1)
             return [
                 {"time": r.time.isoformat(), "value": r.nepse_index, "change": r.nepse_change, "changePct": r.nepse_change_pct}
                 for r in rows if r.nepse_index > 0
             ]
 
         # Scale the avg LTP proxy to match the last known real NEPSE index value
-        # so the chart doesn't show confusingly different numbers.
         last_known = rows[-1].nepse_index if rows else None
         last_proxy = float(result[-1][1])
         scale = (last_known / last_proxy) if last_known and last_proxy else 1.0

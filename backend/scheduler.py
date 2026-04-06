@@ -164,20 +164,37 @@ class IngestionScheduler:
             rows = []
 
             for item in live_data:
+                # NepseAPI uses camelCase field names (lastTradedPrice, highPrice, etc.)
                 symbol = item.get("symbol")
                 if not symbol:
                     continue
+                ltp = float(
+                    item.get("lastTradedPrice") or item.get("ltp") or
+                    item.get("lastTradedPricePerUnit") or 0
+                )
+                if not ltp:
+                    continue  # skip rows with no valid price
                 rows.append({
                     "symbol": symbol,
-                    "ltp": float(item.get("ltp", 0)),
-                    "high": float(item["high"]) if item.get("high") else None,
-                    "low": float(item["low"]) if item.get("low") else None,
-                    "open": float(item["open"]) if item.get("open") else None,
-                    "close": float(item["close"]) if item.get("close") else None,
-                    "change": float(item["change"]) if item.get("change") else None,
-                    "change_percent": float(item["changePercent"]) if item.get("changePercent") else None,
-                    "volume": int(item["volume"]) if item.get("volume") else None,
-                    "turnover": float(item["turnover"]) if item.get("turnover") else None,
+                    "ltp": ltp,
+                    "high": float(item["highPrice"]) if item.get("highPrice") else (
+                        float(item["high"]) if item.get("high") else None),
+                    "low": float(item["lowPrice"]) if item.get("lowPrice") else (
+                        float(item["low"]) if item.get("low") else None),
+                    "open": float(item["openPrice"]) if item.get("openPrice") else (
+                        float(item["open"]) if item.get("open") else None),
+                    "close": float(item["previousClose"]) if item.get("previousClose") else (
+                        float(item["close"]) if item.get("close") else None),
+                    "change": float(
+                        item.get("change") or item.get("pointChange") or 0
+                    ),
+                    "change_percent": float(
+                        item.get("percentageChange") or item.get("changePercent") or 0
+                    ),
+                    "volume": int(item["totalTradeQuantity"]) if item.get("totalTradeQuantity") else (
+                        int(item["volume"]) if item.get("volume") else None),
+                    "turnover": float(item["totalTradeValue"]) if item.get("totalTradeValue") else (
+                        float(item["turnover"]) if item.get("turnover") else None),
                     "time": now,
                     "source": "rest",
                 })
