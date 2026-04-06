@@ -69,7 +69,7 @@ def _aggregate_ohlcv(rows_iter, interval_minutes: int) -> list:
     from collections import defaultdict
     buckets: dict[int, list] = defaultdict(list)
     for t, ltp, vol in rows_iter:
-        if ltp is None:
+        if not ltp or ltp <= 0:
             continue
         epoch = int(t.timestamp())
         bucket = (epoch // (interval_minutes * 60)) * (interval_minutes * 60)
@@ -635,6 +635,7 @@ async def get_stock_chart(
                 StockPrice.symbol == symbol,
                 StockPrice.time >= cutoff,
                 StockPrice.source == "rest",
+                StockPrice.ltp > 0,
             )
             .order_by(StockPrice.time.asc())
             .all()
