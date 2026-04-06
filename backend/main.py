@@ -13,6 +13,7 @@ from .database import engine, Base
 from .models import (
     StockPrice, Floorsheet, MarketStatus, AIInsight, MarketSummary,
     DailyMarketBreadth, DailySectorIndex, DailyTopMover, IntradaySectorValue,
+    NewsArticle,
 )
 from .providers import NepseAPIProvider, DataProviderManager
 from .scheduler import IngestionScheduler
@@ -434,10 +435,15 @@ async def post_stock_insight(symbol: str, body: dict = Body(default={})):
         analysis = analysis_resp.get("data") if isinstance(analysis_resp, dict) else None
         if not analysis:
             raise HTTPException(404, f"No data for {sym}")
-        text = await generate_stock_insight_text(sym, analysis, options)
-        if not text:
-            raise HTTPException(500, "Empty response from AI")
         db = SessionLocal()
+        try:
+            text = await generate_stock_insight_text(sym, analysis, options, db=db)
+        except Exception:
+            db.close()
+            raise
+        if not text:
+            db.close()
+            raise HTTPException(500, "Empty response from AI")
         try:
             row = AIInsight(
                 generated_at=datetime.now(timezone.utc),
@@ -498,16 +504,91 @@ async def post_stock_chat(symbol: str, body: dict = Body(...)):
     messages = body.get("messages", [])
     if not messages:
         raise HTTPException(400, "messages required")
+    db = SessionLocal()
     try:
         analysis_resp = await get_stock_analysis(sym)
         analysis = analysis_resp.get("data") if isinstance(analysis_resp, dict) else {}
-        response = await stock_chat_turn(sym, analysis or {}, messages)
+        response = await stock_chat_turn(sym, analysis or {}, messages, db=db)
         return {"response": response}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Stock chat error for {sym}: {e}")
         raise HTTPException(500, str(e))
+    finally:
+        db.close()
+
+
+def _serialize_article(article: NewsArticle) -> dict:
+    return {
+        "id": article.id,
+        "title": article.title,
+        "link": article.link,
+        "summary": article.summary,
+        "source": article.source,
+        "published_at": article.published_at.isoformat(),
+        "fetched_at": article.fetched_at.isoformat(),
+        "symbols": article.symbols or [],
+        "category": article.category,
+    }
+
+
+@app.get("/api/news")
+async def get_news(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    symbol: str | None = None,
+    category: str | None = None,
+    source: str | None = None,
+):
+    """Get recent news articles with optional filters."""
+    db = SessionLocal()
+    try:
+        q = db.query(NewsArticle).order_by(NewsArticle.published_at.desc())
+        if symbol:
+            q = q.filter(NewsArticle.symbols.contains([symbol.upper()]))
+        if category:
+            q = q.filter(NewsArticle.category == category)
+        if source:
+            q = q.filter(NewsArticle.source == source)
+        total = q.count()
+        articles = q.offset(offset).limit(limit).all()
+        return {
+            "data": [_serialize_article(a) for a in articles],
+            "meta": {"total": total, "limit": limit, "offset": offset},
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/stocks/{symbol}/news")
+async def get_stock_news(symbol: str, limit: int = Query(10, ge=1, le=50)):
+    """Get recent news articles mentioning a specific stock symbol."""
+    sym = symbol.upper()
+    db = SessionLocal()
+    try:
+        articles = (
+            db.query(NewsArticle)
+            .filter(NewsArticle.symbols.contains([sym]))
+            .order_by(NewsArticle.published_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return {"data": [_serialize_article(a) for a in articles]}
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/run/ingest-news")
+async def admin_run_ingest_news():
+    """Manually trigger news ingestion from RSS feeds."""
+    if scheduler is None:
+        return {"ok": False, "error": "Scheduler not running"}
+    try:
+        await scheduler.ingest_news()
+        return {"ok": True, "action": "ingest_news"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/api/stocks/{symbol}/floorsheet")

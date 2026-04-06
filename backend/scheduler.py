@@ -130,6 +130,17 @@ class IngestionScheduler:
             misfire_grace_time=600,
         )
 
+        # News ingestion: every 30 min, all days (news publishes outside market hours)
+        self.scheduler.add_job(
+            self.ingest_news,
+            CronTrigger(minute="*/30", timezone=settings.scheduler_timezone),
+            id="ingest_news",
+            name="Ingest news from RSS feeds",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
+
         # Floorsheet retention: weekly cleanup on Monday at 2 AM NPT
         self.scheduler.add_job(
             self.cleanup_old_floorsheet,
@@ -457,13 +468,35 @@ class IngestionScheduler:
                 )
                 db.execute(stmt)
 
-            # --- Market Breadth (derived from live_market) ---
-            # NepseAPI LiveMarket uses "percentageChange" not "change"
+            # --- Market Breadth (derived from live_market, fallback to DB stock_prices) ---
+            # NepseAPI LiveMarket uses "percentageChange" not "change".
+            # After close, live_market is empty — compute from today's stored prices instead.
             if isinstance(live_market, list) and live_market:
                 advances = sum(1 for s in live_market if (s.get("percentageChange") or s.get("change") or 0) > 0)
                 declines = sum(1 for s in live_market if (s.get("percentageChange") or s.get("change") or 0) < 0)
                 unchanged = len(live_market) - advances - declines
                 total = len(live_market)
+            else:
+                # Fallback: compute from latest stock_prices for today
+                from sqlalchemy import text as sql_text2
+                row = db.execute(sql_text2("""
+                    SELECT
+                      COUNT(*) AS total,
+                      COUNT(CASE WHEN change_percent > 0 THEN 1 END) AS advances,
+                      COUNT(CASE WHEN change_percent < 0 THEN 1 END) AS declines,
+                      COUNT(CASE WHEN (change_percent = 0 OR change_percent IS NULL) THEN 1 END) AS unchanged
+                    FROM (
+                      SELECT DISTINCT ON (symbol) symbol, change_percent
+                      FROM stock_prices
+                      WHERE time >= NOW() - INTERVAL '16 hours' AND ltp > 0
+                      ORDER BY symbol, time DESC
+                    ) latest
+                """)).fetchone()
+                advances = row.advances or 0 if row else 0
+                declines = row.declines or 0 if row else 0
+                unchanged = row.unchanged or 0 if row else 0
+                total = row.total or 0 if row else 0
+            if total > 0:
                 ad_ratio = round(advances / declines, 2) if declines > 0 else None
                 breadth = {
                     "advances": advances,
@@ -477,7 +510,16 @@ class IngestionScheduler:
                     date=today, advances=advances, declines=declines,
                     unchanged=unchanged, total=total, ad_ratio=ad_ratio,
                 )
-                stmt = stmt.on_conflict_do_nothing()
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["date"],
+                    set_={
+                        "advances": stmt.excluded.advances,
+                        "declines": stmt.excluded.declines,
+                        "unchanged": stmt.excluded.unchanged,
+                        "total": stmt.excluded.total,
+                        "ad_ratio": stmt.excluded.ad_ratio,
+                    },
+                )
                 db.execute(stmt)
 
             # --- Market Overview (cache only, DB handled by ingest_market_summary) ---
@@ -578,6 +620,18 @@ class IngestionScheduler:
             await generate_insight(db, self.provider_manager, WEEKLY_WRAP)
         except Exception as e:
             logger.error(f"AI weekly wrap failed: {e}")
+        finally:
+            db.close()
+
+    async def ingest_news(self):
+        """Fetch news from RSS feeds and store new articles."""
+        db = self.db_session_factory()
+        try:
+            from .news import ingest_news
+            count = await ingest_news(db)
+            logger.info(f"News ingestion job done: {count} new articles")
+        except Exception as e:
+            logger.error(f"News ingestion job failed: {e}")
         finally:
             db.close()
 

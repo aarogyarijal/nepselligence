@@ -14,6 +14,7 @@ import RelPerfCard from '@/components/stock/RelPerfCard'
 import FloorsheetCard from '@/components/stock/FloorsheetCard'
 import StockChartPanel from '@/components/stock/StockChartPanel'
 import StockAIPanel from '@/components/stock/StockAIPanel'
+import StockNewsCard from '@/components/stock/StockNewsCard'
 
 export default function StockPage() {
   const params = useParams()
@@ -105,6 +106,9 @@ export default function StockPage() {
 
         {/* Row 3: AI Analysis + Chat */}
         <StockAIPanel symbol={symbol} />
+
+        {/* Row 3.5: Stock News */}
+        <StockNewsCard symbol={symbol} />
 
         {/* Row 4: Floorsheet (conditional) */}
         {analysis.floorsheet && (

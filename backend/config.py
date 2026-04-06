@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     claude_model_fast: str = "claude-haiku-4-5-20251001"   # for market_open + hourly insights
     claude_model_deep: str = "claude-sonnet-4-6"           # for daily_close + weekly_wrap
 
+    # News RSS feeds
+    news_rss_sharesansar: str = "https://www.sharesansar.com/rss"
+    news_retention_days: int = 90
+
     # Server
     environment: str = "development"
     log_level: str = "INFO"

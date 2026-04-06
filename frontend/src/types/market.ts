@@ -173,6 +173,20 @@ export interface MarketInsightOptions {
   focus: MarketFocus[]
 }
 
+export interface NewsArticle {
+  id: number
+  title: string
+  link: string
+  summary: string | null
+  source: string
+  published_at: string
+  fetched_at: string
+  symbols: string[]
+  category: string
+}
+
+export type NewsCategory = 'all' | 'market' | 'dividend' | 'ipo' | 'corporate' | 'policy' | 'general'
+
 export interface StockAnalysis {
   symbol: string
   name: string | null

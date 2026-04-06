@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text as sql_text
 
 from .config import settings
-from .models import AIInsight, MarketSummary, DailySectorIndex, DailyMarketBreadth
+from .models import AIInsight, MarketSummary, DailySectorIndex, DailyMarketBreadth, NewsArticle
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,25 @@ def _gather_market_context(db: Session) -> dict:
             "ad_ratio": breadth.ad_ratio,
         }
 
+    # Recent news headlines (last 24 hours)
+    news_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    recent_news = (
+        db.query(NewsArticle)
+        .filter(NewsArticle.published_at >= news_cutoff)
+        .order_by(NewsArticle.published_at.desc())
+        .limit(10)
+        .all()
+    )
+    if recent_news:
+        ctx["recent_news"] = [
+            {
+                "title": n.title,
+                "category": n.category,
+                "symbols": n.symbols or [],
+            }
+            for n in recent_news
+        ]
+
     return ctx
 
 
@@ -115,6 +134,23 @@ def _gather_week_context(db: Session) -> list[dict]:
     ]
 
 
+def _news_section(ctx: dict) -> str:
+    """Format recent news headlines for injection into prompts."""
+    news = ctx.get("recent_news")
+    if not news:
+        return ""
+    return f"""
+<recent_news>
+{json.dumps(news, indent=2)}
+</recent_news>
+"""
+
+
+def _strip_news(ctx: dict) -> dict:
+    """Return ctx without recent_news key (avoid duplication in market_data block)."""
+    return {k: v for k, v in ctx.items() if k != "recent_news"}
+
+
 def _market_focus_context(focus: list[str]) -> str:
     """Build a focus instruction string for market prompts."""
     if not focus:
@@ -142,36 +178,40 @@ def _build_open_prompt(ctx: dict, options: dict | None = None) -> str:
     opts = options or {}
     focus_ctx = _market_focus_context(opts.get("focus", []))
     word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
+    news_block = _news_section(ctx)
+    market_data = _strip_news(ctx)
     return f"""You are a NEPSE market analyst. The Nepal Stock Exchange (NEPSE) has just opened for trading.
 {f"Configuration: {focus_ctx}" if focus_ctx else ""}
 <market_data>
-{json.dumps(ctx, indent=2)}
+{json.dumps(market_data, indent=2)}
 </market_data>
-
+{news_block}
 Write a morning market briefing in plain text (no markdown, no code fences) with exactly 3 sections:
 
 1. SUMMARY: One sentence on the opening context — yesterday's close, index level, and initial market tone.
 2. SIGNALS: Two to three stocks or sectors worth watching today based on recent momentum.
-3. ANOMALIES: Any pre-market observations or risks to watch (high breadth imbalance, sector weakness, etc.).
+3. ANOMALIES: Any pre-market observations or risks to watch (high breadth imbalance, sector weakness, relevant news events, etc.).
 
-Keep the total {word_limit}. {detail_instr} Be factual and specific."""
+Keep the total {word_limit}. {detail_instr} Be factual and specific. Reference any relevant recent news where it adds context."""
 
 
 def _build_hourly_prompt(ctx: dict, options: dict | None = None) -> str:
     opts = options or {}
     focus_ctx = _market_focus_context(opts.get("focus", []))
     word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
+    news_block = _news_section(ctx)
+    market_data = _strip_news(ctx)
     return f"""You are a NEPSE market analyst providing a mid-session update.
 {f"Configuration: {focus_ctx}" if focus_ctx else ""}
 <market_data>
-{json.dumps(ctx, indent=2)}
+{json.dumps(market_data, indent=2)}
 </market_data>
-
+{news_block}
 Write a mid-session update in plain text (no markdown, no code fences) with exactly 3 sections:
 
 1. SUMMARY: One sentence on current market direction — NEPSE level, change, and intraday breadth.
 2. SIGNALS: Two stocks showing notable intraday strength or weakness and why they stand out.
-3. ANOMALIES: Any unusual activity — sector rotation, volume spikes, or breadth extremes.
+3. ANOMALIES: Any unusual activity — sector rotation, volume spikes, breadth extremes, or news-driven moves.
 
 Keep the total {word_limit}. {detail_instr} Be specific about numbers (index level, % changes)."""
 
@@ -180,13 +220,15 @@ def _build_close_prompt(ctx: dict, day_insights: list[str], options: dict | None
     opts = options or {}
     focus_ctx = _market_focus_context(opts.get("focus", []))
     word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
+    news_block = _news_section(ctx)
+    market_data = _strip_news(ctx)
     prior = "\n\n".join(day_insights) if day_insights else "No earlier insights today."
     return f"""You are a NEPSE market analyst writing the end-of-day market summary.
 {f"Configuration: {focus_ctx}" if focus_ctx else ""}
 <market_data>
-{json.dumps(ctx, indent=2)}
+{json.dumps(market_data, indent=2)}
 </market_data>
-
+{news_block}
 <earlier_insights_today>
 {prior}
 </earlier_insights_today>
@@ -195,15 +237,17 @@ Write an end-of-day analysis in plain text (no markdown, no code fences) with ex
 
 1. SUMMARY: Two to three sentences summarizing the full trading session — final NEPSE level, overall direction, turnover, and market breadth conclusion.
 2. SIGNALS: Three to four stocks worth monitoring tomorrow based on today's close — include price levels and reasons.
-3. ANOMALIES: Notable events from today's session — sector concentration, unusual volumes, large swings, or breadth extremes.
+3. ANOMALIES: Notable events from today's session — sector concentration, unusual volumes, large swings, breadth extremes, or news events that drove moves.
 
-Keep the total {word_limit}. {detail_instr} Reference the earlier intraday insights where relevant."""
+Keep the total {word_limit}. {detail_instr} Reference the earlier intraday insights where relevant. Incorporate any news headlines that explain today's price action."""
 
 
 def _build_weekly_prompt(ctx: dict, week_data: list[dict], options: dict | None = None) -> str:
     opts = options or {}
     focus_ctx = _market_focus_context(opts.get("focus", []))
     word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
+    news_block = _news_section(ctx)
+    market_data = _strip_news(ctx)
     return f"""You are a NEPSE market analyst writing the weekly market wrap.
 {f"Configuration: {focus_ctx}" if focus_ctx else ""}
 <this_week_data>
@@ -211,16 +255,16 @@ def _build_weekly_prompt(ctx: dict, week_data: list[dict], options: dict | None 
 </this_week_data>
 
 <latest_session>
-{json.dumps(ctx, indent=2)}
+{json.dumps(market_data, indent=2)}
 </latest_session>
-
+{news_block}
 Write a weekly market wrap in plain text (no markdown, no code fences) with exactly 3 sections:
 
 1. SUMMARY: Two to three sentences on the week's overall performance — net NEPSE change, high/low range, and total turnover trajectory.
 2. SIGNALS: Three stocks or sectors that defined the week — both leaders and laggards with context.
-3. ANOMALIES: Any week-level themes worth watching next week — trends, reversals, volume patterns, or macro signals.
+3. ANOMALIES: Any week-level themes worth watching next week — trends, reversals, volume patterns, macro signals, or news-driven catalysts.
 
-Keep the total {word_limit}. {detail_instr} Be analytical, not just descriptive."""
+Keep the total {word_limit}. {detail_instr} Be analytical, not just descriptive. Reference key news events from the week where relevant."""
 
 
 async def generate_insight(db: Session, provider_manager, insight_type: str, options: dict | None = None) -> None:
@@ -301,7 +345,7 @@ async def generate_market_insight(db: Session, provider_manager) -> None:
 STOCK_INSIGHT = "stock_insight"
 
 
-def _build_stock_insight_prompt(symbol: str, analysis: dict, options: dict | None = None) -> str:
+def _build_stock_insight_prompt(symbol: str, analysis: dict, options: dict | None = None, news: list | None = None) -> str:
     """Build prompt for stock-specific one-shot analysis. options shapes horizon, signals, and goal."""
     opts = options or {}
     horizon = opts.get("horizon", "medium_term")
@@ -391,6 +435,14 @@ def _build_stock_insight_prompt(symbol: str, analysis: dict, options: dict | Non
     if goal_label:
         config_lines.append(goal_label + ".")
 
+    news_block = ""
+    if news:
+        news_block = f"""
+<recent_news>
+{json.dumps(news, indent=2)}
+</recent_news>
+"""
+
     return f"""You are a NEPSE stock analyst. Provide a data-driven analysis of {symbol} ({analysis.get('name', '')}, sector: {analysis.get('sector', '')}).
 
 {" ".join(config_lines)}
@@ -398,26 +450,29 @@ def _build_stock_insight_prompt(symbol: str, analysis: dict, options: dict | Non
 <current_data>
 {chr(10).join(data_parts)}
 </current_data>
-
+{news_block}
 Write a concise analysis in plain text (no markdown, no code fences) with exactly 3 sections:
 
 1. SUMMARY: Two sentences on the stock's current {horizon.replace('_', '-')} technical position and key level to watch.
 2. SIGNALS: Two to three specific observations from the selected indicators — what they say about near-term direction given the {'current' if goal == 'neutral' else goal.replace('_', ' ')} perspective.
-3. ANOMALIES: Any standout observations — unusual volume, volatility, divergence, or patterns relevant to {horizon.replace('_', ' ')} trading.
+3. ANOMALIES: Any standout observations — unusual volume, volatility, divergence, news-driven catalysts, or patterns relevant to {horizon.replace('_', ' ')} trading.
 
-Under 200 words total. Be specific with price levels and percentages."""
+Under 200 words total. Be specific with price levels and percentages. Reference any relevant news if it affects the outlook."""
 
 
-def _build_stock_system_prompt(symbol: str, analysis: dict) -> str:
+def _build_stock_system_prompt(symbol: str, analysis: dict, news: list | None = None) -> str:
     """Build system message for conversational stock chat."""
     import json
     slim = {k: v for k, v in analysis.items() if k not in ("history", "overlays")}
+    news_section = ""
+    if news:
+        news_section = f"\n\nRecent news about {symbol}:\n{json.dumps(news, indent=2)}\n"
     return f"""You are a NEPSE stock analyst assistant. The user is analyzing {symbol} ({analysis.get('name', '')}, sector: {analysis.get('sector', '')}).
 
 You have the following current market data for this stock:
 
 {json.dumps(slim, indent=2)}
-
+{news_section}
 Guidelines:
 - Answer directly and specifically using the numbers above
 - Under 150 words unless the question genuinely requires more detail
@@ -426,12 +481,32 @@ Guidelines:
 - If asked about data not in the context, say so rather than guessing"""
 
 
-async def generate_stock_insight_text(symbol: str, analysis: dict, options: dict | None = None) -> str:
+def _get_stock_news(db: Session, symbol: str, hours: int = 72) -> list[dict]:
+    """Fetch recent news articles mentioning a specific stock symbol."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    articles = (
+        db.query(NewsArticle)
+        .filter(
+            NewsArticle.published_at >= cutoff,
+            NewsArticle.symbols.contains([symbol]),
+        )
+        .order_by(NewsArticle.published_at.desc())
+        .limit(5)
+        .all()
+    )
+    return [
+        {"title": a.title, "category": a.category, "published_at": a.published_at.isoformat()}
+        for a in articles
+    ]
+
+
+async def generate_stock_insight_text(symbol: str, analysis: dict, options: dict | None = None, db: Session | None = None) -> str:
     """Generate a Claude insight for a specific stock. Returns raw text."""
     if not settings.claude_api_key:
         raise RuntimeError("CLAUDE_API_KEY not configured")
 
-    prompt = _build_stock_insight_prompt(symbol, analysis, options)
+    news = _get_stock_news(db, symbol) if db else []
+    prompt = _build_stock_insight_prompt(symbol, analysis, options, news=news)
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=settings.claude_api_key)
@@ -446,12 +521,13 @@ async def generate_stock_insight_text(symbol: str, analysis: dict, options: dict
         raise RuntimeError("anthropic package not installed")
 
 
-async def stock_chat_turn(symbol: str, analysis: dict, messages: list[dict]) -> str:
+async def stock_chat_turn(symbol: str, analysis: dict, messages: list[dict], db: Session | None = None) -> str:
     """Generate a single conversational reply about a stock."""
     if not settings.claude_api_key:
         raise RuntimeError("CLAUDE_API_KEY not configured")
 
-    system = _build_stock_system_prompt(symbol, analysis)
+    news = _get_stock_news(db, symbol) if db else []
+    system = _build_stock_system_prompt(symbol, analysis, news=news)
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=settings.claude_api_key)

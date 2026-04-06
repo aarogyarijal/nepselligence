@@ -12,6 +12,7 @@ import TurnoverLeaders from '@/components/TurnoverLeaders'
 import MarketBreadthWidget from '@/components/MarketBreadth'
 import AIPanel from '@/components/AIPanel'
 import AdminControls from '@/components/AdminControls'
+import NewsFeed from '@/components/NewsFeed'
 import WidgetShell from '@/components/WidgetShell'
 import FloorsheetModal from '@/components/FloorsheetModal'
 import { fetchMarketOverview } from '@/lib/api'
@@ -143,6 +144,9 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+
+          {/* Row 4: News Feed */}
+          <NewsFeed />
 
         </main>
 

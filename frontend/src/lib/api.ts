@@ -19,6 +19,7 @@ import type {
   StockChatMessage,
   StockInsightOptions,
   MarketInsightOptions,
+  NewsArticle,
 } from '@/types/market'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
@@ -176,6 +177,33 @@ export async function generateMarketInsight(
     body: options ? JSON.stringify({ options }) : undefined,
   })
   return res.json()
+}
+
+export async function fetchNews(params?: {
+  symbol?: string
+  category?: string
+  limit?: number
+  offset?: number
+}): Promise<{ data: NewsArticle[]; meta: { total: number; limit: number; offset: number } }> {
+  const p = new URLSearchParams()
+  if (params?.symbol) p.set('symbol', params.symbol)
+  if (params?.category && params.category !== 'all') p.set('category', params.category)
+  if (params?.limit) p.set('limit', String(params.limit))
+  if (params?.offset) p.set('offset', String(params.offset))
+  const qs = p.toString()
+  const res = await fetch(`${API_URL}/api/news${qs ? `?${qs}` : ''}`, { mode: 'cors' })
+  if (!res.ok) return { data: [], meta: { total: 0, limit: 20, offset: 0 } }
+  return res.json()
+}
+
+export async function fetchStockNews(symbol: string, limit = 10): Promise<NewsArticle[]> {
+  const res = await fetch(
+    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/news?limit=${limit}`,
+    { mode: 'cors' }
+  )
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.data ?? []
 }
 
 export async function chatWithStock(

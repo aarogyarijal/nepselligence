@@ -146,6 +146,29 @@ class DailyTopMover(Base):
     )
 
 
+class NewsArticle(Base):
+    """News articles ingested from RSS feeds and other sources."""
+
+    __tablename__ = "news_articles"
+
+    id = Column(Integer, primary_key=True)
+    guid = Column(String(500), nullable=False, unique=True)  # RSS <guid> for deduplication
+    title = Column(String(500), nullable=False)
+    link = Column(String(500), nullable=False)
+    summary = Column(Text)  # Cleaned text stripped of HTML tags
+    source = Column(String(50), nullable=False, default="sharesansar")
+    published_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    fetched_at = Column(DateTime(timezone=True), nullable=False)
+    symbols = Column(JSONB, default=[])  # e.g. ["NABIL", "SBL"] — GIN indexed for fast containment queries
+    category = Column(String(50))  # dividend, ipo, market, policy, corporate, general
+
+    __table_args__ = (
+        Index("idx_news_published", "published_at"),
+        Index("idx_news_symbols", "symbols", postgresql_using="gin"),
+        Index("idx_news_source", "source"),
+    )
+
+
 class IntradaySectorValue(Base):
     """5-minute sector index snapshots for multi-day charts."""
 
