@@ -1,5 +1,41 @@
 // Shared TypeScript interfaces for NEPSE market data
 
+export type TimeInterval = '1min' | '5min' | '15min' | '30min' | '1H' | '4H' | '1D'
+
+export const VALID_INTERVALS: Record<string, TimeInterval[]> = {
+  '1D':  ['1min', '5min', '15min', '30min', '1H'],
+  '5D':  ['5min', '15min', '30min', '1H', '4H'],
+  '1M':  ['15min', '30min', '1H', '4H', '1D'],
+  '3M':  ['1H', '4H', '1D'],
+  '6M':  ['4H', '1D'],
+  '1Y':  ['1D'],
+  '5Y':  ['1D'],
+}
+
+export const DEFAULT_INTERVAL: Record<string, TimeInterval> = {
+  '1D': '1min', '5D': '15min', '1M': '1H',
+  '3M': '1D', '6M': '1D', '1Y': '1D', '5Y': '1D',
+}
+
+export interface StockChartPoint {
+  time: string
+  value?: number
+  change?: number
+  changePct?: number
+  open?: number
+  high?: number
+  low?: number
+  close?: number
+  volume?: number
+}
+
+export interface StockChartResponse {
+  type: 'line' | 'ohlcv'
+  interval: TimeInterval
+  range: string
+  data: StockChartPoint[]
+}
+
 export interface ApiEnvelope<T> {
   data: T
   meta: {

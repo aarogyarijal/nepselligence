@@ -12,7 +12,7 @@ from .config import settings
 from .database import engine, Base
 from .models import (
     StockPrice, Floorsheet, MarketStatus, AIInsight, MarketSummary,
-    DailyMarketBreadth, DailySectorIndex, DailyTopMover,
+    DailyMarketBreadth, DailySectorIndex, DailyTopMover, IntradaySectorValue,
 )
 from .providers import NepseAPIProvider, DataProviderManager
 from .scheduler import IngestionScheduler
@@ -23,6 +23,71 @@ logger = logging.getLogger(__name__)
 
 # Global scheduler instance
 scheduler: IngestionScheduler = None
+
+# Interval constants
+INTERVAL_MINUTES = {
+    "1min": 1, "5min": 5, "15min": 15, "30min": 30,
+    "1H": 60, "4H": 240, "1D": 1440,
+}
+DEFAULT_INTERVAL = {
+    "1D": "1min", "5D": "15min", "1M": "1H",
+    "3M": "1D", "6M": "1D", "1Y": "1D", "5Y": "1D",
+}
+
+
+def _aggregate_timeseries(rows_iter, interval_minutes: int) -> list:
+    """Bucket [{time (datetime), value (float)}] into N-minute intervals.
+    Keeps last value per bucket. Computes change/changePct relative to first point."""
+    from collections import OrderedDict
+    buckets: dict[int, tuple] = OrderedDict()
+    for t, val in rows_iter:
+        if val is None:
+            continue
+        epoch = int(t.timestamp())
+        bucket = (epoch // (interval_minutes * 60)) * (interval_minutes * 60)
+        buckets[bucket] = (t, float(val))
+
+    if not buckets:
+        return []
+    sorted_b = sorted(buckets.items())
+    first_val = sorted_b[0][1][1]
+    result = []
+    for epoch, (_, val) in sorted_b:
+        change = round(val - first_val, 2)
+        change_pct = round((change / first_val) * 100, 2) if first_val else 0.0
+        result.append({
+            "time": datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat(),
+            "value": val,
+            "change": change,
+            "changePct": change_pct,
+        })
+    return result
+
+
+def _aggregate_ohlcv(rows_iter, interval_minutes: int) -> list:
+    """Aggregate [{time (datetime), ltp (float), volume (int|None)}] to N-min OHLCV candles."""
+    from collections import defaultdict
+    buckets: dict[int, list] = defaultdict(list)
+    for t, ltp, vol in rows_iter:
+        if ltp is None:
+            continue
+        epoch = int(t.timestamp())
+        bucket = (epoch // (interval_minutes * 60)) * (interval_minutes * 60)
+        buckets[bucket].append((t, float(ltp), vol or 0))
+    result = []
+    for bucket_epoch in sorted(buckets.keys()):
+        ticks = buckets[bucket_epoch]
+        vals = [v for _, v, _ in ticks]
+        vols = [vol for _, _, vol in ticks]
+        result.append({
+            "time": datetime.fromtimestamp(bucket_epoch, tz=timezone.utc).isoformat(),
+            "open": vals[0],
+            "high": max(vals),
+            "low": min(vals),
+            "close": vals[-1],
+            "volume": sum(vols),
+        })
+    return result
 
 
 @asynccontextmanager
@@ -118,8 +183,11 @@ async def get_latest_prices():
 
 
 @app.get("/api/index/history")
-async def get_index_history(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$")):
-    """Get NEPSE index time-series for the given range.
+async def get_index_history(
+    range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$"),
+    interval: str = Query(default=""),
+):
+    """Get NEPSE index time-series for the given range and interval.
 
     Primary source: MarketSummary table (real NEPSE index values).
     Fallback: daily average LTP from StockPrice table when summary is sparse (<2 rows).
@@ -165,6 +233,13 @@ async def get_index_history(range: str = Query(default="1D", regex="^(1D|5D|1M|3
                         "change": change,
                         "changePct": change_pct,
                     })
+                # Aggregate to requested interval
+                int_min = INTERVAL_MINUTES.get(interval or DEFAULT_INTERVAL[range], 1)
+                if int_min > 1:
+                    result = _aggregate_timeseries(
+                        [(datetime.fromisoformat(r["time"]), r["value"]) for r in result],
+                        int_min,
+                    )
                 return result
 
         # Try real MarketSummary data first (exclude zero-index rows from failed ingests)
@@ -178,15 +253,9 @@ async def get_index_history(range: str = Query(default="1D", regex="^(1D|5D|1M|3
         use_real = distinct_days >= min_real_days[range]
 
         if use_real:
-            return [
-                {
-                    "time": r.time.isoformat(),
-                    "value": r.nepse_index,
-                    "change": r.nepse_change,
-                    "changePct": r.nepse_change_pct,
-                }
-                for r in rows
-            ]
+            int_min = INTERVAL_MINUTES.get(interval or DEFAULT_INTERVAL[range], 5)
+            rows_iter = ((r.time, r.nepse_index) for r in rows if r.nepse_index > 0)
+            return _aggregate_timeseries(rows_iter, int_min)
 
         # Fallback: derive a market proxy from daily average LTP across all backfilled stocks.
         # Groups stock_prices by calendar date and averages LTP for each day.
@@ -420,8 +489,50 @@ async def get_stock_intraday(symbol: str):
 
 
 @app.get("/api/sectors/intraday")
-async def get_sectors_intraday():
-    """Get today's minute-by-minute intraday graphs for all 13 NEPSE sector subindices."""
+async def get_sectors_intraday(
+    range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$"),
+    interval: str = Query(default=""),
+):
+    """Get intraday graphs for all 13 NEPSE sector subindices.
+
+    range=1D: live NepseAPI sector graphs (1-min native).
+    range>1D: persisted intraday_sector_values table (5-min snapshots).
+    """
+    eff_interval = interval or DEFAULT_INTERVAL[range]
+    int_min = INTERVAL_MINUTES.get(eff_interval, 1)
+
+    if range != "1D":
+        # Query persisted intraday sector values
+        db = SessionLocal()
+        cutoff = _range_cutoff(range)
+        try:
+            rows = db.query(IntradaySectorValue).filter(
+                IntradaySectorValue.time >= cutoff
+            ).order_by(IntradaySectorValue.time.asc()).all()
+
+            # Group by sector
+            from collections import defaultdict
+            sector_rows: dict[str, list] = defaultdict(list)
+            for r in rows:
+                sector_rows[r.sector_name].append((r.time, r.value))
+
+            result = {}
+            for sector_name, pts in sector_rows.items():
+                result[sector_name] = _aggregate_timeseries(pts, int_min)
+
+            # If no data yet (ingestion hasn't started), fall back to live
+            if not result and scheduler is not None:
+                raw = await scheduler.provider_manager.get_sector_intraday_graphs()
+                for sname, pts in raw.items():
+                    if pts:
+                        seen = {int(p[0]): float(p[1]) for p in pts if isinstance(p, (list, tuple))}
+                        live_iter = [(datetime.fromtimestamp(ts, tz=timezone.utc), val) for ts, val in sorted(seen.items())]
+                        result[sname] = _aggregate_timeseries(live_iter, int_min)
+            return result
+        finally:
+            db.close()
+
+    # range=1D: use live sector graph endpoints
     if scheduler is None:
         return {}
     raw = await scheduler.provider_manager.get_sector_intraday_graphs()
@@ -440,19 +551,111 @@ async def get_sectors_intraday():
         if not sorted_pts:
             result[sector_name] = []
             continue
-        first_val = sorted_pts[0][1]
-        sector_points = []
-        for ts, val in sorted_pts:
-            change = round(val - first_val, 2)
-            change_pct = round((change / first_val) * 100, 2) if first_val else 0.0
-            sector_points.append({
-                "time": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
-                "value": val,
-                "change": change,
-                "changePct": change_pct,
-            })
-        result[sector_name] = sector_points
+        live_iter = [(datetime.fromtimestamp(ts, tz=timezone.utc), val) for ts, val in sorted_pts]
+        result[sector_name] = _aggregate_timeseries(live_iter, int_min)
     return result
+
+
+@app.get("/api/stocks/{symbol}/chart")
+async def get_stock_chart(
+    symbol: str,
+    range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$"),
+    interval: str = Query(default=""),
+):
+    """Unified stock chart data. Returns line data for sub-daily intervals, OHLCV for 1D interval."""
+    symbol = symbol.upper()
+    eff_interval = interval or DEFAULT_INTERVAL[range]
+    int_min = INTERVAL_MINUTES.get(eff_interval, 1)
+    cutoff = _range_cutoff(range)
+
+    # --- 1D interval: return daily OHLCV from backfill ---
+    if eff_interval == "1D":
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(StockPrice)
+                .filter(
+                    StockPrice.symbol == symbol,
+                    StockPrice.time >= cutoff,
+                    StockPrice.source == "backfill",
+                )
+                .order_by(StockPrice.time.asc())
+                .all()
+            )
+            data = [
+                {
+                    "time": r.time.date().isoformat(),
+                    "open": r.open,
+                    "high": r.high,
+                    "low": r.low,
+                    "close": r.close or r.ltp,
+                    "volume": r.volume,
+                }
+                for r in rows
+                if (r.close or r.open or r.high or r.low)
+            ]
+            return {"type": "ohlcv", "interval": eff_interval, "range": range, "data": data}
+        finally:
+            db.close()
+
+    # --- range=1D, sub-daily: use DailyScripPriceGraph (1-min native) ---
+    if range == "1D" and scheduler is not None:
+        raw = await scheduler.provider_manager.get_daily_scrip_price_graph(symbol)
+        if raw:
+            rows_iter = []
+            for item in raw:
+                rate = item.get("contractRate") or item.get("rate")
+                t = item.get("time") or item.get("tradeTime")
+                vol = item.get("contractQuantity") or item.get("quantity") or 0
+                if rate is None or t is None:
+                    continue
+                try:
+                    ts_dt = datetime.fromtimestamp(int(t), tz=timezone.utc)
+                except (ValueError, TypeError):
+                    continue
+                rows_iter.append((ts_dt, float(rate), int(vol)))
+            # Deduplicate by second
+            seen: dict = {}
+            for ts_dt, rate, vol in rows_iter:
+                seen[int(ts_dt.timestamp())] = (ts_dt, rate, vol)
+            sorted_pts = sorted(seen.items())
+            if sorted_pts:
+                line_data = _aggregate_timeseries(
+                    [(ts_dt, rate) for _, (ts_dt, rate, _) in sorted_pts],
+                    int_min,
+                )
+                return {"type": "line", "interval": eff_interval, "range": range, "data": line_data}
+
+    # --- multi-day sub-daily: use stock_prices source='rest' (5-min resolution) ---
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(StockPrice)
+            .filter(
+                StockPrice.symbol == symbol,
+                StockPrice.time >= cutoff,
+                StockPrice.source == "rest",
+            )
+            .order_by(StockPrice.time.asc())
+            .all()
+        )
+        if rows:
+            if int_min >= 15:
+                # Enough resolution for meaningful OHLCV from 5-min REST snapshots
+                data = _aggregate_ohlcv(
+                    ((r.time, r.ltp, r.volume) for r in rows),
+                    int_min,
+                )
+                return {"type": "ohlcv", "interval": eff_interval, "range": range, "data": data}
+            else:
+                data = _aggregate_timeseries(
+                    ((r.time, r.ltp) for r in rows),
+                    int_min,
+                )
+                return {"type": "line", "interval": eff_interval, "range": range, "data": data}
+        return {"type": "line", "interval": eff_interval, "range": range, "data": []}
+    finally:
+        db.close()
 
 
 @app.get("/api/market/overview")

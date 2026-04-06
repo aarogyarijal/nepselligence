@@ -10,7 +10,7 @@ from apscheduler.triggers.cron import CronTrigger
 from .config import settings
 from .models import (
     StockPrice, MarketStatus, Floorsheet, MarketSummary,
-    DailyMarketBreadth, DailySectorIndex, DailyTopMover,
+    DailyMarketBreadth, DailySectorIndex, DailyTopMover, IntradaySectorValue,
 )
 from .providers import DataProviderManager
 
@@ -214,36 +214,46 @@ class IngestionScheduler:
             nepse_change = None
             nepse_change_pct = None
 
-            # NepseAPI /NepseIndex returns a list; find the main NEPSE index
+            # NepseAPI /NepseIndex — handles both list and dict (keyed by index name) formats
+            def _extract_index_entry(entry: dict) -> None:
+                nonlocal nepse_index, nepse_change, nepse_change_pct
+                nepse_index = float(entry.get("currentValue", 0) or entry.get("value", 0) or 0)
+                nepse_change = float(entry.get("change", 0) or 0)
+                nepse_change_pct = float(entry.get("perChange", 0) or entry.get("changePercent", 0) or 0)
+
             if isinstance(index_data, list):
                 for entry in index_data:
                     if entry.get("index") == "NEPSE Index" or entry.get("indexName") == "NEPSE":
-                        nepse_index = float(entry.get("currentValue", 0) or entry.get("value", 0) or 0)
-                        nepse_change = float(entry.get("change", 0) or 0)
-                        nepse_change_pct = float(entry.get("perChange", 0) or entry.get("changePercent", 0) or 0)
+                        _extract_index_entry(entry)
                         break
                 if nepse_index is None and index_data:
-                    # fallback: use first entry
-                    entry = index_data[0]
-                    nepse_index = float(entry.get("currentValue", 0) or entry.get("value", 0) or 0)
-                    nepse_change = float(entry.get("change", 0) or 0)
-                    nepse_change_pct = float(entry.get("perChange", 0) or entry.get("changePercent", 0) or 0)
+                    _extract_index_entry(index_data[0])
             elif isinstance(index_data, dict):
-                nepse_index = float(index_data.get("currentValue", 0) or index_data.get("value", 0) or 0)
-                nepse_change = float(index_data.get("change", 0) or 0)
-                nepse_change_pct = float(index_data.get("perChange", 0) or index_data.get("changePercent", 0) or 0)
+                # Format: {"NEPSE Index": {currentValue, change, ...}, "Sensitive Index": {...}, ...}
+                if "NEPSE Index" in index_data:
+                    _extract_index_entry(index_data["NEPSE Index"])
+                elif index_data:
+                    # Unknown flat dict format — try direct keys
+                    _extract_index_entry(index_data)
 
-            if nepse_index is None:
-                logger.warning("Could not extract NEPSE index value, skipping")
+            if not nepse_index:
+                logger.warning("Could not extract NEPSE index value (got 0 or None), skipping")
                 return
 
             total_turnover = None
             total_shares = None
             total_transactions = None
             if isinstance(summary_data, dict):
-                total_turnover = float(summary_data.get("totalTurnover", 0) or 0)
-                total_shares = int(summary_data.get("totalTradedShares", 0) or 0)
-                total_transactions = int(summary_data.get("totalTransactions", 0) or 0)
+                # NepseAPI /Summary uses space-separated keys: "Total Turnover Rs:", "Total Traded Shares", etc.
+                total_turnover = float(
+                    summary_data.get("Total Turnover Rs:") or summary_data.get("totalTurnover") or 0
+                )
+                total_shares = int(
+                    summary_data.get("Total Traded Shares") or summary_data.get("totalTradedShares") or 0
+                )
+                total_transactions = int(
+                    summary_data.get("Total Transactions") or summary_data.get("totalTransactions") or 0
+                )
 
             stmt = pg_insert(MarketSummary).values(
                 time=now,
@@ -316,6 +326,17 @@ class IngestionScheduler:
                         "changePct": float(s.get("perChange") or s.get("changePercent") or 0),
                     })
                 cache.set("sectors", make_envelope(normalized, "live"), ttl=300)
+                # Persist intraday sector time-series (5-min resolution for multi-day charts)
+                now_ts = datetime.now(timezone.utc)
+                for row in normalized:
+                    if row["value"] and row["value"] > 0:
+                        stmt = pg_insert(IntradaySectorValue).values(
+                            sector_name=row["name"],
+                            time=now_ts,
+                            value=row["value"],
+                        )
+                        stmt = stmt.on_conflict_do_nothing(constraint="uq_sector_intraday")
+                        db.execute(stmt)
                 # Persist to DB (upsert per sector per date)
                 for row in normalized:
                     stmt = pg_insert(DailySectorIndex).values(

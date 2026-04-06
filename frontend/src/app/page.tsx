@@ -16,6 +16,8 @@ import WidgetShell from '@/components/WidgetShell'
 import FloorsheetModal from '@/components/FloorsheetModal'
 import { fetchMarketOverview } from '@/lib/api'
 import { usePolling } from '@/hooks/usePolling'
+import type { TimeInterval } from '@/types/market'
+import { VALID_INTERVALS, DEFAULT_INTERVAL } from '@/types/market'
 
 export type TimeRange = '1D' | '5D' | '1M' | '3M' | '6M' | '1Y' | '5Y'
 const RANGES: TimeRange[] = ['1D', '5D', '1M', '3M', '6M', '1Y', '5Y']
@@ -25,6 +27,7 @@ export default function Dashboard() {
   const [isOpen, setIsOpen] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
   const [range, setRange] = useState<TimeRange>('1D')
+  const [interval, setInterval] = useState<TimeInterval>('1min')
   const [floorsheetSymbol, setFloorsheetSymbol] = useState<string | null>(null)
 
   const loadMarketStatus = async () => {
@@ -40,6 +43,12 @@ export default function Dashboard() {
   useEffect(() => { loadMarketStatus() }, [])
   usePolling(loadMarketStatus, 60_000, true)
 
+  const handleRangeChange = (r: TimeRange) => {
+    setRange(r)
+    const valid = VALID_INTERVALS[r]
+    if (!valid.includes(interval)) setInterval(DEFAULT_INTERVAL[r])
+  }
+
   const handleSymbolSelect = (symbol: string) => {
     router.push(`/stock/${encodeURIComponent(symbol)}`)
   }
@@ -50,14 +59,14 @@ export default function Dashboard() {
         {/* W1: Market Status Bar */}
         <MarketStatusBar onSymbolSearch={handleSymbolSelect} isOpen={isOpen} />
 
-        {/* Global Time Range Selector */}
+        {/* Global Time Range + Interval Selector */}
         <div className="border-b border-slate-800 bg-slate-950 px-6 py-2">
-          <div className="max-w-[1600px] mx-auto flex items-center gap-1">
+          <div className="max-w-[1600px] mx-auto flex items-center gap-1 flex-wrap">
             <span className="text-xs text-slate-500 mr-2 font-medium uppercase tracking-wider">Range</span>
             {RANGES.map(r => (
               <button
                 key={r}
-                onClick={() => setRange(r)}
+                onClick={() => handleRangeChange(r)}
                 className={`px-3 py-1 text-xs rounded font-semibold transition-colors ${
                   range === r
                     ? 'bg-slate-600 text-white'
@@ -65,6 +74,21 @@ export default function Dashboard() {
                 }`}
               >
                 {r}
+              </button>
+            ))}
+            <div className="w-px h-4 bg-slate-700 mx-2" />
+            <span className="text-xs text-slate-500 mr-2 font-medium uppercase tracking-wider">Interval</span>
+            {VALID_INTERVALS[range].map(iv => (
+              <button
+                key={iv}
+                onClick={() => setInterval(iv)}
+                className={`px-3 py-1 text-xs rounded font-semibold transition-colors ${
+                  interval === iv
+                    ? 'bg-blue-700 text-white'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                {iv}
               </button>
             ))}
           </div>
@@ -76,13 +100,13 @@ export default function Dashboard() {
             <div className="col-span-8">
               <WidgetShell title="NEPSE Index" className="h-80">
                 <div className="h-56">
-                  <IndexChart isOpen={isOpen} range={range} />
+                  <IndexChart isOpen={isOpen} range={range} interval={interval} />
                 </div>
               </WidgetShell>
             </div>
             <div className="col-span-4">
               <WidgetShell title="Sector Performance" className="h-80">
-                <SectorPerformance isOpen={isOpen} range={range} />
+                <SectorPerformance isOpen={isOpen} range={range} interval={interval} />
               </WidgetShell>
             </div>
           </div>

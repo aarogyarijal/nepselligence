@@ -1,11 +1,9 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { fetchStockAnalysis } from '@/lib/api'
 import type { StockAnalysis } from '@/types/market'
-import type { ChartOverlay } from '@/components/CandlestickChart'
-import CandlestickChart from '@/components/CandlestickChart'
 import StockHeader from '@/components/stock/StockHeader'
 import SignalsCard from '@/components/stock/SignalsCard'
 import ReturnsCard from '@/components/stock/ReturnsCard'
@@ -14,7 +12,7 @@ import VolumeCard from '@/components/stock/VolumeCard'
 import VolatilityCard from '@/components/stock/VolatilityCard'
 import RelPerfCard from '@/components/stock/RelPerfCard'
 import FloorsheetCard from '@/components/stock/FloorsheetCard'
-import IntradayChart from '@/components/stock/IntradayChart'
+import StockChartPanel from '@/components/stock/StockChartPanel'
 
 export default function StockPage() {
   const params = useParams()
@@ -24,7 +22,6 @@ export default function StockPage() {
   const [analysis, setAnalysis] = useState<StockAnalysis | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [isMarketOpen, setIsMarketOpen] = useState(false)
 
   useEffect(() => {
     if (!symbol) return
@@ -41,26 +38,6 @@ export default function StockPage() {
       .catch(() => setError('Failed to load analysis. Is the backend running?'))
       .finally(() => setLoading(false))
   }, [symbol])
-
-  // Check market status to drive intraday polling
-  useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/market/overview`)
-      .then(r => r.json())
-      .then(d => setIsMarketOpen(d?.data?.isOpen ?? false))
-      .catch(() => {})
-  }, [])
-
-  // Must be declared before any conditional returns (Rules of Hooks)
-  const overlays = useMemo<ChartOverlay[]>(() => {
-    if (!analysis) return []
-    return [
-      { label: 'SMA 20', data: analysis.overlays.sma20, color: '#facc15' },
-      { label: 'SMA 50', data: analysis.overlays.sma50, color: '#f97316' },
-      { label: 'SMA 200', data: analysis.overlays.sma200, color: '#a855f7' },
-      { label: 'BB Upper', data: analysis.overlays.bollingerUpper, color: '#64748b', dashed: true },
-      { label: 'BB Lower', data: analysis.overlays.bollingerLower, color: '#64748b', dashed: true },
-    ].filter(o => o.data.length > 0)
-  }, [analysis])
 
   if (loading) {
     return (
@@ -101,26 +78,10 @@ export default function StockPage() {
         {/* Header */}
         <StockHeader analysis={analysis} />
 
-        {/* Intraday chart — today's minute-by-minute price */}
+        {/* Unified price chart with range + interval selectors */}
         <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Today's Intraday</h2>
-          <div style={{ height: 200 }}>
-            <IntradayChart symbol={symbol} isOpen={isMarketOpen} />
-          </div>
-        </div>
-
-        {/* Candlestick chart with overlays */}
-        <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Price Chart</h2>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="flex items-center gap-1"><span className="w-3 h-px bg-yellow-400 inline-block" /> SMA 20</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-px bg-orange-400 inline-block" /> SMA 50</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-px bg-purple-400 inline-block" /> SMA 200</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-px bg-slate-500 inline-block border-dashed border-t border-slate-400" /> BB</span>
-            </div>
-          </div>
-          <CandlestickChart data={analysis.history} overlays={overlays} height={380} />
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Price Chart</h2>
+          <StockChartPanel symbol={symbol} />
         </div>
 
         {/* Row 1: Signals + Returns + Technicals */}

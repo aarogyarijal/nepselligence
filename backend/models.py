@@ -144,3 +144,19 @@ class DailyTopMover(Base):
     __table_args__ = (
         UniqueConstraint("date", "category", "rank", name="uq_mover_date_category_rank"),
     )
+
+
+class IntradaySectorValue(Base):
+    """5-minute sector index snapshots for multi-day charts."""
+
+    __tablename__ = "intraday_sector_values"
+
+    id = Column(Integer, primary_key=True)
+    sector_name = Column(String(100), nullable=False)
+    time = Column(DateTime(timezone=True), nullable=False, index=True)
+    value = Column(Float, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("sector_name", "time", name="uq_sector_intraday"),
+        Index("idx_sector_intraday_time", "sector_name", "time"),
+    )

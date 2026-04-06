@@ -9,6 +9,7 @@ import { fetchIndexHistory } from '@/lib/api'
 import { usePolling } from '@/hooks/usePolling'
 import { formatPrice, formatChangePct, changeClass, changeArrow } from '@/lib/format'
 import type { TimeRange } from '@/app/page'
+import type { TimeInterval } from '@/types/market'
 
 interface ChartPoint {
   time: string
@@ -19,6 +20,7 @@ interface ChartPoint {
 interface IndexChartProps {
   isOpen: boolean
   range: TimeRange
+  interval?: TimeInterval
 }
 
 function formatTime(isoString: string, range: TimeRange): string {
@@ -35,14 +37,13 @@ function formatTime(isoString: string, range: TimeRange): string {
   })
 }
 
-export default function IndexChart({ isOpen, range }: IndexChartProps) {
+export default function IndexChart({ isOpen, range, interval = '1min' }: IndexChartProps) {
   const [data, setData] = useState<ChartPoint[]>([])
   const [loading, setLoading] = useState(true)
 
-  const load = async () => {
-    setLoading(true)
+  const refresh = async () => {
     try {
-      const rows = await fetchIndexHistory(range)
+      const rows = await fetchIndexHistory(range, interval)
       if (rows && rows.length > 0) {
         setData(rows.map(r => ({
           time: formatTime(r.time, range),
@@ -54,13 +55,14 @@ export default function IndexChart({ isOpen, range }: IndexChartProps) {
       }
     } catch {
       setData([])
-    } finally {
-      setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [range])
-  usePolling(load, 30_000, isOpen && range === '1D')
+  useEffect(() => {
+    setLoading(true)
+    refresh().finally(() => setLoading(false))
+  }, [range, interval])
+  usePolling(refresh, 30_000, isOpen && range === '1D')
 
   const last = data[data.length - 1]
   const first = data[0]

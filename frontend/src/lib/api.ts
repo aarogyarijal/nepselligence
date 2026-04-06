@@ -14,6 +14,7 @@ import type {
   StockAnalysis,
   IntradayPoint,
   SectorIntradayData,
+  StockChartResponse,
 } from '@/types/market'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
@@ -60,9 +61,19 @@ export async function fetchStockAnalysis(symbol: string): Promise<ApiEnvelope<St
   return get(`/api/stocks/${encodeURIComponent(symbol)}/analysis`)
 }
 
-export async function fetchIndexHistory(range: string): Promise<{ time: string; value: number }[]> {
-  const res = await fetch(`${API_URL}/api/index/history?range=${range}`, { mode: 'cors' })
+export async function fetchIndexHistory(range: string, interval = ''): Promise<{ time: string; value: number }[]> {
+  const params = new URLSearchParams({ range })
+  if (interval) params.set('interval', interval)
+  const res = await fetch(`${API_URL}/api/index/history?${params}`, { mode: 'cors' })
   if (!res.ok) return []
+  return res.json()
+}
+
+export async function fetchStockChart(symbol: string, range: string, interval = ''): Promise<StockChartResponse> {
+  const params = new URLSearchParams({ range })
+  if (interval) params.set('interval', interval)
+  const res = await fetch(`${API_URL}/api/stocks/${encodeURIComponent(symbol)}/chart?${params}`, { mode: 'cors' })
+  if (!res.ok) return { type: 'line', interval: interval as StockChartResponse['interval'] || '1min', range, data: [] }
   return res.json()
 }
 
@@ -101,8 +112,10 @@ export async function fetchStockIntraday(symbol: string): Promise<IntradayPoint[
   return res.json()
 }
 
-export async function fetchSectorsIntraday(): Promise<SectorIntradayData> {
-  const res = await fetch(`${API_URL}/api/sectors/intraday`, { mode: 'cors' })
+export async function fetchSectorsIntraday(range = '1D', interval = ''): Promise<SectorIntradayData> {
+  const params = new URLSearchParams({ range })
+  if (interval) params.set('interval', interval)
+  const res = await fetch(`${API_URL}/api/sectors/intraday?${params}`, { mode: 'cors' })
   if (!res.ok) return {}
   return res.json()
 }

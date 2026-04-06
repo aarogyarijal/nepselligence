@@ -7,12 +7,13 @@ import {
 } from 'recharts'
 import { fetchSectors, fetchSectorsIntraday } from '@/lib/api'
 import { usePolling } from '@/hooks/usePolling'
-import type { SectorData, IntradayPoint } from '@/types/market'
+import type { SectorData, IntradayPoint, TimeInterval } from '@/types/market'
 import type { TimeRange } from '@/app/page'
 
 interface SectorPerformanceProps {
   isOpen: boolean
   range: TimeRange
+  interval?: TimeInterval
 }
 
 const UP = '#16a34a'
@@ -36,7 +37,7 @@ function Sparkline({ points, color }: { points: IntradayPoint[]; color: string }
   )
 }
 
-export default function SectorPerformance({ isOpen, range }: SectorPerformanceProps) {
+export default function SectorPerformance({ isOpen, range, interval = '1min' }: SectorPerformanceProps) {
   const [sectors, setSectors] = useState<SectorData[]>([])
   const [intraday, setIntraday] = useState<Record<string, IntradayPoint[]>>({})
   const [loading, setLoading] = useState(true)
@@ -57,19 +58,20 @@ export default function SectorPerformance({ isOpen, range }: SectorPerformancePr
   }, [range])
 
   const loadIntraday = useCallback(async () => {
-    if (range !== '1D') return
+    // Load intraday sparklines for 1D or sub-daily intervals on multi-day ranges
+    if (interval === '1D') return
     try {
-      const data = await fetchSectorsIntraday()
+      const data = await fetchSectorsIntraday(range, interval)
       setIntraday(data)
     } catch {
       setIntraday({})
     }
-  }, [range])
+  }, [range, interval])
 
   useEffect(() => { setLoading(true); load() }, [load])
-  useEffect(() => { if (range === '1D') loadIntraday() }, [loadIntraday, range])
+  useEffect(() => { if (interval !== '1D') loadIntraday() }, [loadIntraday, interval])
   usePolling(load, 300_000, isOpen && range === '1D')
-  usePolling(loadIntraday, 60_000, isOpen && range === '1D')
+  usePolling(loadIntraday, 60_000, isOpen && range === '1D' && interval !== '1D')
 
   if (loading) {
     return (
@@ -85,8 +87,8 @@ export default function SectorPerformance({ isOpen, range }: SectorPerformancePr
     return <p className="text-slate-500 text-sm text-center py-8">No sector data</p>
   }
 
-  // 1D: sparkline cards
-  if (range === '1D') {
+  // Sparkline view: 1D range OR sub-daily interval on multi-day range
+  if (interval !== '1D') {
     return (
       <div className="grid grid-cols-1 gap-1 overflow-y-auto">
         {sectors.map(s => {
@@ -120,7 +122,7 @@ export default function SectorPerformance({ isOpen, range }: SectorPerformancePr
     )
   }
 
-  // Multi-day: horizontal bar chart
+  // interval=1D: horizontal bar chart
   const data = sectors.map(s => ({
     ...s,
     shortName: s.name.replace(' Index', '').replace('NEPSE ', '').slice(0, 18),
