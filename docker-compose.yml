@@ -61,6 +61,22 @@ services:
       - nepselligence
     restart: unless-stopped
 
+  # Next.js frontend dashboard
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    container_name: nepselligence-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - nepselligence
+    restart: unless-stopped
+
 volumes:
   postgres_data:
 

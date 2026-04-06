@@ -2,142 +2,157 @@
 
 import { useEffect, useState } from 'react'
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
+import { fetchIndexHistory } from '@/lib/api'
+import { usePolling } from '@/hooks/usePolling'
+import { formatPrice, formatChangePct, changeClass, changeArrow } from '@/lib/format'
+import type { TimeRange } from '@/app/page'
 
-interface ChartData {
+interface ChartPoint {
   time: string
   value: number
+  rawTime: string
 }
 
-interface Props {
-  timeRange: string
+interface IndexChartProps {
+  isOpen: boolean
+  range: TimeRange
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+function formatTime(isoString: string, range: TimeRange): string {
+  const d = new Date(isoString)
+  if (range === '1D') {
+    return d.toLocaleTimeString('en-US', {
+      hour: '2-digit', minute: '2-digit', hour12: false,
+      timeZone: 'Asia/Kathmandu',
+    })
+  }
+  return d.toLocaleDateString('en-IN', {
+    month: 'short', day: 'numeric',
+    timeZone: 'Asia/Kathmandu',
+  })
+}
 
-export default function IndexChart({ timeRange }: Props) {
-  const [data, setData] = useState<ChartData[]>([])
+export default function IndexChart({ isOpen, range }: IndexChartProps) {
+  const [data, setData] = useState<ChartPoint[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        const response = await fetch(`${API_URL}/api/stocks/latest`, {
-          mode: 'cors',
-        })
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`)
-        }
-
-        const prices = await response.json()
-
-        // If we have prices, use them; otherwise use mock data for MVP display
-        if (prices && prices.length > 0) {
-          // For now, create mock chart data from first price's NEPSE index
-          const mockData: ChartData[] = [
-            { time: '11:00', value: 2676.68 },
-            { time: '11:30', value: 2680.45 },
-            { time: '12:00', value: 2682.10 },
-            { time: '12:30', value: 2678.90 },
-            { time: '13:00', value: 2685.30 },
-            { time: '13:30', value: 2687.20 },
-            { time: '14:00', value: 2682.50 },
-            { time: '14:30', value: 2684.10 },
-            { time: '15:00', value: 2682.19 },
-          ]
-          setData(mockData)
-        } else {
-          // Market closed or no data - use mock
-          const mockData: ChartData[] = [
-            { time: '11:00', value: 2676.68 },
-            { time: '11:30', value: 2680.45 },
-            { time: '12:00', value: 2682.10 },
-            { time: '12:30', value: 2678.90 },
-            { time: '13:00', value: 2685.30 },
-            { time: '13:30', value: 2687.20 },
-            { time: '14:00', value: 2682.50 },
-            { time: '14:30', value: 2684.10 },
-            { time: '15:00', value: 2682.19 },
-          ]
-          setData(mockData)
-        }
-      } catch (err) {
-        // Fallback to mock data on error
-        const mockData: ChartData[] = [
-          { time: '11:00', value: 2676.68 },
-          { time: '11:30', value: 2680.45 },
-          { time: '12:00', value: 2682.10 },
-          { time: '12:30', value: 2678.90 },
-          { time: '13:00', value: 2685.30 },
-          { time: '13:30', value: 2687.20 },
-          { time: '14:00', value: 2682.50 },
-          { time: '14:30', value: 2684.10 },
-          { time: '15:00', value: 2682.19 },
-        ]
-        setData(mockData)
-        setError(err instanceof Error ? err.message : 'Failed to fetch data')
-      } finally {
-        setLoading(false)
+  const load = async () => {
+    setLoading(true)
+    try {
+      const rows = await fetchIndexHistory(range)
+      if (rows && rows.length > 0) {
+        setData(rows.map(r => ({
+          time: formatTime(r.time, range),
+          value: r.value,
+          rawTime: r.time,
+        })))
+      } else {
+        setData([])
       }
+    } catch {
+      setData([])
+    } finally {
+      setLoading(false)
     }
-
-    fetchData()
-  }, [timeRange])
-
-  if (loading) {
-    return <div className="text-slate-400">Loading chart...</div>
   }
 
-  if (error) {
-    return <div className="text-red-400">Error: {error}</div>
-  }
+  useEffect(() => { load() }, [range])
+  usePolling(load, 60_000, isOpen && range === '1D')
 
-  const minValue = Math.min(...data.map((d) => d.value))
-  const maxValue = Math.max(...data.map((d) => d.value))
-  const isNegative = data[data.length - 1].value < data[0].value
+  const last = data[data.length - 1]
+  const first = data[0]
+  const change = data.length >= 2 ? last.value - first.value : 0
+  const changePct = data.length >= 2 ? (change / first.value) * 100 : 0
+  const isNegative = change < 0
+  const color = isNegative ? '#dc2626' : '#16a34a'
+
+  const chartData = data.length === 1
+    ? [{ ...data[0], time: '' }, data[0]]
+    : data
+
+  const values = data.map(d => d.value)
+  const minValue = values.length ? Math.min(...values) : 0
+  const maxValue = values.length ? Math.max(...values) : 0
+  const padding = (maxValue - minValue) * 0.1 || 1
 
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgb(100, 116, 139)" />
-        <XAxis
-          dataKey="time"
-          stroke="rgb(148, 163, 184)"
-          style={{ fontSize: '12px' }}
-        />
-        <YAxis
-          domain={[minValue * 0.99, maxValue * 1.01]}
-          stroke="rgb(148, 163, 184)"
-          style={{ fontSize: '12px' }}
-        />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: 'rgb(30, 41, 59)',
-            border: '1px solid rgb(100, 116, 139)',
-            borderRadius: '8px',
-            color: 'rgb(226, 232, 240)',
-          }}
-          formatter={(value: number) => value.toFixed(2)}
-        />
-        <Line
-          type="monotone"
-          dataKey="value"
-          stroke={isNegative ? '#ef4444' : '#10b981'}
-          dot={{ fill: isNegative ? '#ef4444' : '#10b981', r: 4 }}
-          isAnimationActive={false}
-          strokeWidth={2}
-        />
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="flex flex-col h-full">
+      {/* Header: current value + change */}
+      <div className="flex items-center gap-3 mb-2 shrink-0">
+        {last && (
+          <>
+            <span className="text-2xl font-bold text-white">{formatPrice(last.value)}</span>
+            {data.length >= 2 && (
+              <span className={`text-sm font-medium ${changeClass(change)}`}>
+                {changeArrow(change)} {formatChangePct(changePct)}
+              </span>
+            )}
+            {data.length === 1 && (
+              <span className="text-xs text-slate-500">1 snapshot — ingesting more during market hours</span>
+            )}
+          </>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm animate-pulse">
+          Loading...
+        </div>
+      ) : data.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
+          No index data — run Ingest Index to get started
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="nepseGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={color} stopOpacity={0.25} />
+                  <stop offset="95%" stopColor={color} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis
+                dataKey="time"
+                tick={{ fontSize: 10, fill: '#64748b' }}
+                axisLine={false}
+                tickLine={false}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                domain={[minValue - padding, maxValue + padding]}
+                tick={{ fontSize: 10, fill: '#64748b' }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={v => v.toFixed(0)}
+                width={52}
+              />
+              <Tooltip
+                contentStyle={{ background: '#0f172a', border: `1px solid ${color}40`, borderRadius: 6 }}
+                labelStyle={{ color: '#94a3b8', fontSize: 11 }}
+                formatter={(v: number) => [v.toFixed(2), 'NEPSE']}
+              />
+              {data.length === 1 && (
+                <ReferenceLine y={data[0].value} stroke={color} strokeDasharray="4 4" strokeOpacity={0.6} />
+              )}
+              <Area
+                type="monotone"
+                dataKey="value"
+                stroke={color}
+                strokeWidth={2}
+                fill="url(#nepseGrad)"
+                dot={data.length === 1 ? { fill: color, r: 4 } : false}
+                activeDot={{ r: 4, fill: color }}
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
   )
 }

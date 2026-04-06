@@ -1,7 +1,7 @@
 """Database models for NEPSE market data."""
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, Float, String, DateTime, UniqueConstraint, Index
+from sqlalchemy import Column, Integer, Float, String, DateTime, Date, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
 
 from .database import Base
@@ -63,6 +63,25 @@ class MarketStatus(Base):
     last_checked = Column(DateTime(timezone=True), nullable=False)
 
 
+class MarketSummary(Base):
+    """NEPSE index snapshots ingested during market hours."""
+
+    __tablename__ = "market_summary"
+
+    id = Column(Integer, primary_key=True)
+    time = Column(DateTime(timezone=True), nullable=False, index=True)
+    nepse_index = Column(Float, nullable=False)
+    nepse_change = Column(Float)
+    nepse_change_pct = Column(Float)
+    total_turnover = Column(Float)
+    total_shares = Column(Integer)
+    total_transactions = Column(Integer)
+
+    __table_args__ = (
+        UniqueConstraint("time", name="uq_summary_time"),
+    )
+
+
 class AIInsight(Base):
     """AI-generated market insights from Claude API."""
 
@@ -73,3 +92,54 @@ class AIInsight(Base):
     insight_text = Column(String(2000), nullable=False)
     symbol = Column(String(20))  # Null if market-wide insight
     extra_data = Column(JSONB)  # Any extra structured data
+
+
+class DailyMarketBreadth(Base):
+    """Daily market breadth: advance/decline/unchanged counts."""
+
+    __tablename__ = "daily_market_breadth"
+
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False, unique=True, index=True)
+    advances = Column(Integer, nullable=False)
+    declines = Column(Integer, nullable=False)
+    unchanged = Column(Integer, nullable=False)
+    total = Column(Integer, nullable=False)
+    ad_ratio = Column(Float)  # advances / declines, null if declines == 0
+
+
+class DailySectorIndex(Base):
+    """Daily sector sub-index values (13 sectors)."""
+
+    __tablename__ = "daily_sector_indices"
+
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False, index=True)
+    sector_name = Column(String(100), nullable=False)
+    index_value = Column(Float, nullable=False)
+    change = Column(Float)
+    change_pct = Column(Float)
+
+    __table_args__ = (
+        UniqueConstraint("date", "sector_name", name="uq_sector_date"),
+    )
+
+
+class DailyTopMover(Base):
+    """Daily top gainers, losers, and turnover leaders."""
+
+    __tablename__ = "daily_top_movers"
+
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False, index=True)
+    category = Column(String(20), nullable=False)  # "gainer", "loser", "turnover"
+    rank = Column(Integer, nullable=False)
+    symbol = Column(String(20), nullable=False)
+    ltp = Column(Float)
+    change = Column(Float)
+    change_pct = Column(Float)
+    turnover = Column(Float)
+
+    __table_args__ = (
+        UniqueConstraint("date", "category", "rank", name="uq_mover_date_category_rank"),
+    )

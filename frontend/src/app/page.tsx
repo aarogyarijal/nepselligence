@@ -1,65 +1,146 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
+import { MarketStatusCtx } from '@/hooks/useMarketStatus'
+import MarketStatusBar from '@/components/MarketStatusBar'
 import IndexChart from '@/components/IndexChart'
-import TopMovers from '@/components/TopMovers'
-import Watchlist from '@/components/Watchlist'
+import SectorPerformance from '@/components/SectorPerformance'
+import TopGainers from '@/components/TopGainers'
+import TopLosers from '@/components/TopLosers'
+import TurnoverLeaders from '@/components/TurnoverLeaders'
+import MarketBreadthWidget from '@/components/MarketBreadth'
 import AIPanel from '@/components/AIPanel'
-import TimeRangeSelector from '@/components/TimeRangeSelector'
+import StockDetail from '@/components/StockDetail'
+import AdminControls from '@/components/AdminControls'
+import WidgetShell from '@/components/WidgetShell'
+import { fetchMarketOverview } from '@/lib/api'
+import { usePolling } from '@/hooks/usePolling'
 
-type TimeRange = '1D' | '5D' | '1M' | '3M'
+export type TimeRange = '1D' | '5D' | '1M' | '3M' | '6M' | '1Y' | '5Y'
+const RANGES: TimeRange[] = ['1D', '5D', '1M', '3M', '6M', '1Y', '5Y']
 
 export default function Dashboard() {
-  const [timeRange, setTimeRange] = useState<TimeRange>('1D')
+  const [isOpen, setIsOpen] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null)
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
+  const [range, setRange] = useState<TimeRange>('1D')
 
-  useEffect(() => {
-    // Verify backend connectivity on mount
-    fetch('http://localhost:8080/health', {
-      mode: 'no-cors',
-    })
-      .catch(() => {
-        // Log connection errors silently for MVP
-      })
-  }, [])
+  const loadMarketStatus = async () => {
+    try {
+      const envelope = await fetchMarketOverview()
+      if (envelope.data) {
+        setIsOpen(envelope.data.isOpen)
+        setLastUpdated(envelope.data.lastUpdated)
+      }
+    } catch {}
+  }
+
+  useEffect(() => { loadMarketStatus() }, [])
+  usePolling(loadMarketStatus, 60_000, true)
+
+  const handleSymbolSelect = (symbol: string) => {
+    setSelectedSymbol(symbol)
+    setTimeout(() => {
+      document.getElementById('stock-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+  }
 
   return (
-    <main className="min-h-screen bg-slate-950 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-4xl font-bold text-white mb-2">NEPSE Dashboard</h1>
-          <p className="text-slate-400">Real-time market intelligence</p>
-        </div>
+    <MarketStatusCtx.Provider value={{ isOpen, lastUpdated }}>
+      <div className="min-h-screen bg-slate-950 flex flex-col">
+        {/* W1: Market Status Bar */}
+        <MarketStatusBar onSymbolSearch={handleSymbolSelect} isOpen={isOpen} />
 
-        {/* Time range selector */}
-        <div className="mb-6">
-          <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
-        </div>
-
-        {/* Index Chart - Full width, 30% viewport height */}
-        <div className="mb-6 bg-slate-900 rounded-lg p-6 border border-slate-700 h-[30vh]">
-          <h2 className="text-xl font-semibold text-white mb-4">NEPSE Index</h2>
-          <IndexChart timeRange={timeRange} />
-        </div>
-
-        {/* Two-column layout: Top Movers (40%) + Watchlist (60%) */}
-        <div className="grid grid-cols-5 gap-6 mb-6">
-          {/* Top Movers - 40% width (2 of 5 columns) */}
-          <div className="col-span-2 bg-slate-900 rounded-lg p-6 border border-slate-700 max-h-96 overflow-y-auto">
-            <h2 className="text-xl font-semibold text-white mb-4">Top Movers</h2>
-            <TopMovers />
-          </div>
-
-          {/* Watchlist - 60% width (3 of 5 columns) */}
-          <div className="col-span-3 bg-slate-900 rounded-lg p-6 border border-slate-700 max-h-96 overflow-y-auto">
-            <h2 className="text-xl font-semibold text-white mb-4">Watchlist</h2>
-            <Watchlist />
+        {/* Global Time Range Selector */}
+        <div className="border-b border-slate-800 bg-slate-950 px-6 py-2">
+          <div className="max-w-[1600px] mx-auto flex items-center gap-1">
+            <span className="text-xs text-slate-500 mr-2 font-medium uppercase tracking-wider">Range</span>
+            {RANGES.map(r => (
+              <button
+                key={r}
+                onClick={() => setRange(r)}
+                className={`px-3 py-1 text-xs rounded font-semibold transition-colors ${
+                  range === r
+                    ? 'bg-slate-600 text-white'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                {r}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* AI Panel - Full width, collapsible */}
-        <AIPanel />
+        <main className="flex-1 p-6 max-w-[1600px] mx-auto w-full">
+          {/* ROW 1: NEPSE Index Chart + Sector Performance */}
+          <div className="grid grid-cols-12 gap-6 mb-6">
+            <div className="col-span-8">
+              <WidgetShell title="NEPSE Index" className="h-80">
+                <div className="h-56">
+                  <IndexChart isOpen={isOpen} range={range} />
+                </div>
+              </WidgetShell>
+            </div>
+            <div className="col-span-4">
+              <WidgetShell title="Sector Performance" className="h-80">
+                <SectorPerformance isOpen={isOpen} range={range} />
+              </WidgetShell>
+            </div>
+          </div>
+
+          {/* ROW 2: Top Gainers + Top Losers + Turnover Leaders */}
+          <div className="grid grid-cols-12 gap-6 mb-6">
+            <div className="col-span-3">
+              <WidgetShell title="Top Gainers" className="max-h-96 overflow-y-auto">
+                <TopGainers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} />
+              </WidgetShell>
+            </div>
+            <div className="col-span-3">
+              <WidgetShell title="Top Losers" className="max-h-96 overflow-y-auto">
+                <TopLosers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} />
+              </WidgetShell>
+            </div>
+            <div className="col-span-6">
+              <WidgetShell title="Turnover Leaders" className="h-96">
+                <TurnoverLeaders isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} />
+              </WidgetShell>
+            </div>
+          </div>
+
+          {/* ROW 3: Market Breadth + AI Insights */}
+          <div className="grid grid-cols-12 gap-6 mb-6">
+            <div className="col-span-4">
+              <WidgetShell title="Market Breadth" className="h-64">
+                <MarketBreadthWidget isOpen={isOpen} range={range} />
+              </WidgetShell>
+            </div>
+            <div className="col-span-8">
+              <div className="h-64">
+                <AIPanel isOpen={isOpen} />
+              </div>
+            </div>
+          </div>
+
+          {/* ROW 4: Stock Detail (visible when symbol selected) */}
+          {selectedSymbol && (
+            <div id="stock-detail" className="mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <span />
+                <button
+                  onClick={() => setSelectedSymbol(null)}
+                  className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
+                >
+                  ✕ Close
+                </button>
+              </div>
+              <StockDetail symbol={selectedSymbol} />
+            </div>
+          )}
+        </main>
+
+        {/* W10: Admin Controls (collapsed footer) */}
+        <AdminControls />
       </div>
-    </main>
+    </MarketStatusCtx.Provider>
   )
 }
