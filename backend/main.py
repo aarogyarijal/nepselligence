@@ -314,10 +314,10 @@ async def get_index_history(
 
 @app.get("/api/insights/latest")
 async def get_latest_insight(type: str = None):
-    """Get the most recent AI-generated market insight. Optional ?type= filter."""
+    """Get the most recent market-wide AI insight. Optional ?type= filter. Never returns stock-specific insights."""
     db = SessionLocal()
     try:
-        q = db.query(AIInsight).order_by(AIInsight.generated_at.desc())
+        q = db.query(AIInsight).filter(AIInsight.symbol == None).order_by(AIInsight.generated_at.desc())
         if type:
             q = q.filter(AIInsight.insight_type == type)
         insight = q.first()
@@ -335,11 +335,12 @@ async def get_latest_insight(type: str = None):
 
 @app.get("/api/insights/history")
 async def get_insight_history(limit: int = 10):
-    """Get recent AI insights in reverse chronological order."""
+    """Get recent market-wide AI insights. Never returns stock-specific insights."""
     db = SessionLocal()
     try:
         insights = (
             db.query(AIInsight)
+            .filter(AIInsight.symbol == None)
             .order_by(AIInsight.generated_at.desc())
             .limit(min(limit, 50))
             .all()
