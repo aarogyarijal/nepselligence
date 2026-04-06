@@ -12,6 +12,8 @@ import type {
   AIInsight,
   FloorsheetRow,
   StockAnalysis,
+  IntradayPoint,
+  SectorIntradayData,
 } from '@/types/market'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
@@ -88,6 +90,21 @@ export async function fetchFloorsheet(symbol: string, limit = 200): Promise<Floo
   const data = await res.json()
   // endpoint returns ApiEnvelope or raw array
   return Array.isArray(data) ? data : (data.data ?? [])
+}
+
+export async function fetchStockIntraday(symbol: string): Promise<IntradayPoint[]> {
+  const res = await fetch(
+    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/intraday`,
+    { mode: 'cors' }
+  )
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function fetchSectorsIntraday(): Promise<SectorIntradayData> {
+  const res = await fetch(`${API_URL}/api/sectors/intraday`, { mode: 'cors' })
+  if (!res.ok) return {}
+  return res.json()
 }
 
 export async function fetchAdminStatus(): Promise<{

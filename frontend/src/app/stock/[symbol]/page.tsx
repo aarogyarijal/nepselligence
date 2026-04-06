@@ -14,6 +14,7 @@ import VolumeCard from '@/components/stock/VolumeCard'
 import VolatilityCard from '@/components/stock/VolatilityCard'
 import RelPerfCard from '@/components/stock/RelPerfCard'
 import FloorsheetCard from '@/components/stock/FloorsheetCard'
+import IntradayChart from '@/components/stock/IntradayChart'
 
 export default function StockPage() {
   const params = useParams()
@@ -23,6 +24,7 @@ export default function StockPage() {
   const [analysis, setAnalysis] = useState<StockAnalysis | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isMarketOpen, setIsMarketOpen] = useState(false)
 
   useEffect(() => {
     if (!symbol) return
@@ -39,6 +41,14 @@ export default function StockPage() {
       .catch(() => setError('Failed to load analysis. Is the backend running?'))
       .finally(() => setLoading(false))
   }, [symbol])
+
+  // Check market status to drive intraday polling
+  useEffect(() => {
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/market/overview`)
+      .then(r => r.json())
+      .then(d => setIsMarketOpen(d?.data?.isOpen ?? false))
+      .catch(() => {})
+  }, [])
 
   // Must be declared before any conditional returns (Rules of Hooks)
   const overlays = useMemo<ChartOverlay[]>(() => {
@@ -90,6 +100,14 @@ export default function StockPage() {
       <main className="flex-1 p-6 max-w-[1600px] mx-auto w-full space-y-6">
         {/* Header */}
         <StockHeader analysis={analysis} />
+
+        {/* Intraday chart — today's minute-by-minute price */}
+        <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Today's Intraday</h2>
+          <div style={{ height: 200 }}>
+            <IntradayChart symbol={symbol} isOpen={isMarketOpen} />
+          </div>
+        </div>
 
         {/* Candlestick chart with overlays */}
         <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">

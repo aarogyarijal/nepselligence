@@ -95,6 +95,16 @@ export interface FloorsheetRow {
   time: string
 }
 
+export interface IntradayPoint {
+  time: string
+  value: number
+  volume?: number
+  change: number
+  changePct: number
+}
+
+export type SectorIntradayData = Record<string, IntradayPoint[]>
+
 export type FreshnessState = 'fresh' | 'aging' | 'stale'
 
 export interface StockAnalysis {

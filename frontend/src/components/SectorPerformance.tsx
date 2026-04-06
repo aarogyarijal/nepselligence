@@ -3,11 +3,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Cell, ReferenceLine,
-  Tooltip, ResponsiveContainer,
+  Tooltip, ResponsiveContainer, LineChart, Line,
 } from 'recharts'
-import { fetchSectors } from '@/lib/api'
+import { fetchSectors, fetchSectorsIntraday } from '@/lib/api'
 import { usePolling } from '@/hooks/usePolling'
-import type { SectorData } from '@/types/market'
+import type { SectorData, IntradayPoint } from '@/types/market'
 import type { TimeRange } from '@/app/page'
 
 interface SectorPerformanceProps {
@@ -18,8 +18,27 @@ interface SectorPerformanceProps {
 const UP = '#16a34a'
 const DOWN = '#dc2626'
 
+function Sparkline({ points, color }: { points: IntradayPoint[]; color: string }) {
+  if (points.length < 2) return null
+  return (
+    <ResponsiveContainer width="100%" height={32}>
+      <LineChart data={points} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+        <Line
+          type="monotone"
+          dataKey="value"
+          stroke={color}
+          strokeWidth={1.5}
+          dot={false}
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
 export default function SectorPerformance({ isOpen, range }: SectorPerformanceProps) {
   const [sectors, setSectors] = useState<SectorData[]>([])
+  const [intraday, setIntraday] = useState<Record<string, IntradayPoint[]>>({})
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
@@ -37,8 +56,20 @@ export default function SectorPerformance({ isOpen, range }: SectorPerformancePr
     }
   }, [range])
 
+  const loadIntraday = useCallback(async () => {
+    if (range !== '1D') return
+    try {
+      const data = await fetchSectorsIntraday()
+      setIntraday(data)
+    } catch {
+      setIntraday({})
+    }
+  }, [range])
+
   useEffect(() => { setLoading(true); load() }, [load])
+  useEffect(() => { if (range === '1D') loadIntraday() }, [loadIntraday, range])
   usePolling(load, 300_000, isOpen && range === '1D')
+  usePolling(loadIntraday, 60_000, isOpen && range === '1D')
 
   if (loading) {
     return (
@@ -54,11 +85,46 @@ export default function SectorPerformance({ isOpen, range }: SectorPerformancePr
     return <p className="text-slate-500 text-sm text-center py-8">No sector data</p>
   }
 
+  // 1D: sparkline cards
+  if (range === '1D') {
+    return (
+      <div className="grid grid-cols-1 gap-1 overflow-y-auto">
+        {sectors.map(s => {
+          const pts = intraday[s.name] ?? []
+          const color = s.changePct >= 0 ? UP : DOWN
+          const shortName = s.name.replace(' Index', '').replace('NEPSE ', '').slice(0, 22)
+          return (
+            <div key={s.name} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-slate-800/50 transition-colors">
+              {/* Name */}
+              <span className="text-slate-300 text-xs w-36 shrink-0 truncate">{shortName}</span>
+              {/* Sparkline */}
+              <div className="flex-1 min-w-0">
+                {pts.length >= 2
+                  ? <Sparkline points={pts} color={color} />
+                  : <div className="h-8 flex items-center">
+                      <div className="w-full h-px bg-slate-700" />
+                    </div>
+                }
+              </div>
+              {/* Change pct */}
+              <span
+                className="text-xs font-medium w-14 text-right shrink-0"
+                style={{ color }}
+              >
+                {s.changePct >= 0 ? '+' : ''}{s.changePct.toFixed(2)}%
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // Multi-day: horizontal bar chart
   const data = sectors.map(s => ({
     ...s,
     shortName: s.name.replace(' Index', '').replace('NEPSE ', '').slice(0, 18),
   }))
-
   const maxAbs = Math.max(...data.map(d => Math.abs(d.changePct)), 0.1)
 
   return (

@@ -106,6 +106,71 @@ class NepseAPIProvider(DataProvider):
             logger.error(f"NepseAPI nepse_index failed: {e}")
             raise
 
+    async def get_daily_index_graph(self) -> List[List[float]]:
+        """Fetch today's intraday NEPSE index graph as [[epoch_seconds, value], ...]."""
+        try:
+            response = await self.client.get(f"{self.base_url}/DailyNepseIndexGraph")
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, list) else []
+        except httpx.HTTPError as e:
+            logger.error(f"NepseAPI daily_index_graph failed: {e}")
+            return []
+
+    async def get_daily_scrip_price_graph(self, symbol: str) -> List[Dict[str, Any]]:
+        """Fetch today's intraday price graph for a stock symbol.
+
+        Returns [{contractRate, contractQuantity, time}, ...] with minute-by-minute trades.
+        """
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/DailyScripPriceGraph",
+                params={"symbol": symbol},
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, list) else []
+        except httpx.HTTPError as e:
+            logger.error(f"NepseAPI daily_scrip_price_graph({symbol}) failed: {e}")
+            return []
+
+    async def get_sector_intraday_graphs(self) -> Dict[str, List[List[float]]]:
+        """Fetch today's intraday graph for all 13 NEPSE sector subindices in parallel.
+
+        Returns {sector_display_name: [[epoch_seconds, value], ...]}.
+        """
+        import asyncio
+
+        SECTOR_ENDPOINTS: List[tuple] = [
+            ("Commercial Banks",        "DailyBankSubindexGraph"),
+            ("Development Banks",       "DailyDevelopmentBankSubindexGraph"),
+            ("Finance",                 "DailyFinanceSubindexGraph"),
+            ("Microfinance",            "DailyMicrofinanceSubindexGraph"),
+            ("Non Life Insurance",      "DailyNonLifeInsuranceSubindexGraph"),
+            ("Life Insurance",          "DailyLifeInsuranceSubindexGraph"),
+            ("Hydropower",              "DailyHydroPowerSubindexGraph"),
+            ("Hotels And Tourism",      "DailyHotelTourismSubindexGraph"),
+            ("Manufacturing",           "DailyManufacturingProcessingSubindexGraph"),
+            ("Trading",                 "DailyTradingSubindexGraph"),
+            ("Investment",              "DailyInvestmentSubindexGraph"),
+            ("Others",                  "DailyOthersSubindexGraph"),
+            ("Mutual Fund",             "DailyMutualFundSubindexGraph"),
+        ]
+
+        async def _fetch_one(name: str, path: str) -> tuple:
+            try:
+                response = await self.client.get(f"{self.base_url}/{path}")
+                response.raise_for_status()
+                data = response.json()
+                return name, data if isinstance(data, list) else []
+            except httpx.HTTPError as e:
+                logger.warning(f"NepseAPI {path} failed: {e}")
+                return name, []
+
+        tasks = [_fetch_one(name, path) for name, path in SECTOR_ENDPOINTS]
+        results = await asyncio.gather(*tasks)
+        return {name: data for name, data in results}
+
     async def get_market_summary(self) -> Dict[str, Any]:
         """Fetch market summary."""
         try:
@@ -229,6 +294,36 @@ class DataProviderManager:
                 self.failed_over = True
                 return await self.fallback.get_nepse_index()
             raise
+
+    async def get_daily_index_graph(self) -> List[List[float]]:
+        """Get today's intraday NEPSE index graph, failover if needed."""
+        try:
+            return await self.primary.get_daily_index_graph()
+        except (httpx.HTTPError, Exception) as e:
+            logger.warning(f"Primary failed for daily_index_graph: {e}")
+            if self.fallback and hasattr(self.fallback, "get_daily_index_graph"):
+                return await self.fallback.get_daily_index_graph()
+            return []
+
+    async def get_daily_scrip_price_graph(self, symbol: str) -> List[Dict[str, Any]]:
+        """Get today's intraday price graph for a stock, failover if needed."""
+        try:
+            return await self.primary.get_daily_scrip_price_graph(symbol)
+        except (httpx.HTTPError, Exception) as e:
+            logger.warning(f"Primary failed for scrip_price_graph({symbol}): {e}")
+            if self.fallback and hasattr(self.fallback, "get_daily_scrip_price_graph"):
+                return await self.fallback.get_daily_scrip_price_graph(symbol)
+            return []
+
+    async def get_sector_intraday_graphs(self) -> Dict[str, List[List[float]]]:
+        """Get today's intraday graphs for all sector subindices, failover if needed."""
+        try:
+            return await self.primary.get_sector_intraday_graphs()
+        except (httpx.HTTPError, Exception) as e:
+            logger.warning(f"Primary failed for sector_intraday_graphs: {e}")
+            if self.fallback and hasattr(self.fallback, "get_sector_intraday_graphs"):
+                return await self.fallback.get_sector_intraday_graphs()
+            return {}
 
     async def get_market_summary(self) -> Dict[str, Any]:
         """Get market summary, failover if needed."""

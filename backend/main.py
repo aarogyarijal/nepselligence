@@ -135,15 +135,49 @@ async def get_index_history(range: str = Query(default="1D", regex="^(1D|5D|1M|3
         "1Y": timedelta(days=365),
         "5Y": timedelta(days=1825),
     }
+    # For 1D: use real intraday snapshots (just need 2+ points).
+    # For 5D+: require enough distinct calendar days of real data; otherwise the backfill
+    # proxy (one point/day) gives a better picture than a handful of intraday snaps.
+    min_real_days = {"1D": 0, "5D": 4, "1M": 14, "3M": 45, "6M": 90, "1Y": 180, "5Y": 365}
+
     cutoff = datetime.now(timezone.utc) - range_map[range]
     db = SessionLocal()
     try:
-        # Try real MarketSummary data first
+        # For 1D: use DailyNepseIndexGraph — minute-by-minute intraday data from NepseAPI
+        if range == "1D" and scheduler is not None:
+            raw = await scheduler.provider_manager.get_daily_index_graph()
+            if raw:
+                # Deduplicate by timestamp, keep last value per second
+                seen: dict = {}
+                for ts, val in raw:
+                    seen[int(ts)] = float(val)
+                points_sorted = sorted(seen.items())
+                # Build change/changePct relative to first value
+                first_val = points_sorted[0][1]
+                result = []
+                for i, (ts, val) in enumerate(points_sorted):
+                    prev = points_sorted[i - 1][1] if i > 0 else val
+                    change = round(val - first_val, 2)
+                    change_pct = round((change / first_val) * 100, 2) if first_val else 0.0
+                    result.append({
+                        "time": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+                        "value": val,
+                        "change": change,
+                        "changePct": change_pct,
+                    })
+                return result
+
+        # Try real MarketSummary data first (exclude zero-index rows from failed ingests)
         rows = db.query(MarketSummary).filter(
-            MarketSummary.time >= cutoff
+            MarketSummary.time >= cutoff,
+            MarketSummary.nepse_index > 0,
         ).order_by(MarketSummary.time.asc()).all()
 
-        if len(rows) >= 2:
+        # Count distinct calendar dates covered
+        distinct_days = len({r.time.date() for r in rows})
+        use_real = distinct_days >= min_real_days[range]
+
+        if use_real:
             return [
                 {
                     "time": r.time.isoformat(),
@@ -173,10 +207,10 @@ async def get_index_history(range: str = Query(default="1D", regex="^(1D|5D|1M|3
         ).fetchall()
 
         if not result:
-            # Return whatever MarketSummary rows we have (could be 0 or 1)
+            # Return whatever valid MarketSummary rows we have (could be 0 or 1)
             return [
                 {"time": r.time.isoformat(), "value": r.nepse_index, "change": r.nepse_change, "changePct": r.nepse_change_pct}
-                for r in rows
+                for r in rows if r.nepse_index > 0
             ]
 
         # Scale the avg LTP proxy to match the last known real NEPSE index value
@@ -335,6 +369,90 @@ async def get_symbol_floorsheet(symbol: str, limit: int = 100):
         ]
     finally:
         db.close()
+
+
+@app.get("/api/stocks/{symbol}/intraday")
+async def get_stock_intraday(symbol: str):
+    """Get today's minute-by-minute intraday price series for a stock via DailyScripPriceGraph."""
+    if scheduler is None:
+        return []
+    symbol = symbol.upper()
+    raw = await scheduler.provider_manager.get_daily_scrip_price_graph(symbol)
+    if not raw:
+        return []
+
+    # Deduplicate by minute, keep last trade per minute
+    from collections import OrderedDict
+    by_minute: dict = OrderedDict()
+    for item in raw:
+        rate = item.get("contractRate") or item.get("rate") or item.get("price")
+        qty = item.get("contractQuantity") or item.get("quantity") or 0
+        t = item.get("time") or item.get("tradeTime")
+        if rate is None or t is None:
+            continue
+        # Convert epoch seconds → ISO8601 if numeric
+        try:
+            ts_int = int(t)
+            iso_time = datetime.fromtimestamp(ts_int, tz=timezone.utc).isoformat()
+        except (ValueError, TypeError):
+            iso_time = str(t)
+        # Bucket by minute
+        minute_key = iso_time[:16]
+        by_minute[minute_key] = {"time": iso_time, "value": float(rate), "volume": int(qty)}
+
+    points = list(by_minute.values())
+    if not points:
+        return []
+
+    first_val = points[0]["value"]
+    result = []
+    for p in points:
+        change = round(p["value"] - first_val, 2)
+        change_pct = round((change / first_val) * 100, 2) if first_val else 0.0
+        result.append({
+            "time": p["time"],
+            "value": p["value"],
+            "volume": p["volume"],
+            "change": change,
+            "changePct": change_pct,
+        })
+    return result
+
+
+@app.get("/api/sectors/intraday")
+async def get_sectors_intraday():
+    """Get today's minute-by-minute intraday graphs for all 13 NEPSE sector subindices."""
+    if scheduler is None:
+        return {}
+    raw = await scheduler.provider_manager.get_sector_intraday_graphs()
+    result = {}
+    for sector_name, points in raw.items():
+        if not points:
+            result[sector_name] = []
+            continue
+        # Deduplicate by timestamp
+        seen: dict = {}
+        for item in points:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                ts, val = int(item[0]), float(item[1])
+                seen[ts] = val
+        sorted_pts = sorted(seen.items())
+        if not sorted_pts:
+            result[sector_name] = []
+            continue
+        first_val = sorted_pts[0][1]
+        sector_points = []
+        for ts, val in sorted_pts:
+            change = round(val - first_val, 2)
+            change_pct = round((change / first_val) * 100, 2) if first_val else 0.0
+            sector_points.append({
+                "time": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+                "value": val,
+                "change": change,
+                "changePct": change_pct,
+            })
+        result[sector_name] = sector_points
+    return result
 
 
 @app.get("/api/market/overview")
