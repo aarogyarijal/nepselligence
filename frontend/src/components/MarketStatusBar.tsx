@@ -1,10 +1,16 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { fetchMarketOverview, fetchCompanies } from '@/lib/api'
+import { fetchMarketOverview, fetchCompanies, runAdminAction } from '@/lib/api'
 import { formatPrice, formatChange, formatChangePct, changeClass, changeArrow } from '@/lib/format'
 import { usePolling } from '@/hooks/usePolling'
 import type { MarketOverview, Company } from '@/types/market'
+
+const ADMIN_ACTIONS = [
+  { key: 'prices',  label: 'Ingest Prices',  endpoint: '/api/admin/run/ingest-prices',  desc: 'Pull live stock prices from NepseAPI' },
+  { key: 'summary', label: 'Ingest Index',   endpoint: '/api/admin/run/ingest-summary', desc: 'Pull NEPSE index + market summary' },
+  { key: 'insight', label: 'Gen Insight',    endpoint: '/api/admin/run/generate-insight', desc: 'Run Claude AI analysis on current market data' },
+] as const
 
 interface MarketStatusBarProps {
   onSymbolSearch: (symbol: string) => void
@@ -17,6 +23,20 @@ export default function MarketStatusBar({ onSymbolSearch, isOpen }: MarketStatus
   const [suggestions, setSuggestions] = useState<Company[]>([])
   const [allCompanies, setAllCompanies] = useState<Company[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [running, setRunning] = useState<Record<string, boolean>>({})
+  const [done, setDone] = useState<Record<string, boolean>>({})
+
+  const handleAdmin = async (key: string, endpoint: string) => {
+    setRunning(p => ({ ...p, [key]: true }))
+    setDone(p => ({ ...p, [key]: false }))
+    try {
+      await runAdminAction(endpoint)
+      setDone(p => ({ ...p, [key]: true }))
+      setTimeout(() => setDone(p => ({ ...p, [key]: false })), 3000)
+    } finally {
+      setRunning(p => ({ ...p, [key]: false }))
+    }
+  }
 
   const load = async () => {
     try {
@@ -100,8 +120,39 @@ export default function MarketStatusBar({ onSymbolSearch, isOpen }: MarketStatus
         </div>
       )}
 
-      {/* Spacer + Search */}
-      <div className="ml-auto relative">
+      {/* Admin action buttons */}
+      <div className="ml-auto flex items-center gap-1.5">
+        {ADMIN_ACTIONS.map(({ key, label, endpoint, desc }) => (
+          <div key={key} className="relative group">
+            <button
+              onClick={() => handleAdmin(key, endpoint)}
+              disabled={running[key]}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors border ${
+                done[key]
+                  ? 'border-green-700 text-green-400 bg-green-900/20'
+                  : running[key]
+                  ? 'border-slate-700 text-slate-500 cursor-not-allowed bg-slate-800/50'
+                  : 'border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 hover:bg-slate-800'
+              }`}
+            >
+              {running[key] ? (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-2.5 h-2.5 border border-slate-400 border-t-transparent rounded-full animate-spin" />
+                  {label}
+                </span>
+              ) : done[key] ? `✓ ${label}` : label}
+            </button>
+            {/* Tooltip */}
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-slate-300 whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+              {desc}
+              <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 border-l border-t border-slate-600 rotate-45" />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Search */}
+      <div className="relative">
         <input
           type="text"
           value={query}

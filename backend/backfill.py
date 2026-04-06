@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 NEPSE_API = settings.nepse_api_url.rstrip("/")
-CONCURRENCY = 5  # parallel symbol fetches
+CONCURRENCY = 2  # parallel symbol fetches (NepseAPI rate limit: 60 req/min)
 
 
 async def fetch_company_list(client: httpx.AsyncClient) -> list[dict]:
@@ -39,18 +39,35 @@ async def fetch_company_list(client: httpx.AsyncClient) -> list[dict]:
 
 
 async def fetch_price_history(client: httpx.AsyncClient, symbol: str) -> list[dict]:
-    """Return daily price history for a symbol."""
-    try:
-        resp = await client.get(
-            f"{NEPSE_API}/PriceVolumeHistory",
-            params={"symbol": symbol},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json() if isinstance(resp.json(), list) else []
-    except Exception as e:
-        logger.warning(f"  {symbol}: fetch failed — {e}")
-        return []
+    """Return daily price history for a symbol. Retries on 429 with backoff."""
+    for attempt in range(4):
+        try:
+            resp = await client.get(
+                f"{NEPSE_API}/PriceVolumeHistory",
+                params={"symbol": symbol},
+                timeout=30,
+            )
+            if resp.status_code == 429:
+                wait = 2 ** attempt * 10  # 10s, 20s, 40s, 80s
+                logger.warning(f"  {symbol}: rate limited, waiting {wait}s (attempt {attempt+1})")
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            return data if isinstance(data, list) else []
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                wait = 2 ** attempt * 10
+                logger.warning(f"  {symbol}: rate limited, waiting {wait}s (attempt {attempt+1})")
+                await asyncio.sleep(wait)
+                continue
+            logger.warning(f"  {symbol}: fetch failed — {e}")
+            return []
+        except Exception as e:
+            logger.warning(f"  {symbol}: fetch failed — {e}")
+            return []
+    logger.warning(f"  {symbol}: gave up after 4 rate-limit retries")
+    return []
 
 
 async def fetch_nepse_index(client: httpx.AsyncClient) -> dict | None:
@@ -85,6 +102,7 @@ async def backfill_stocks(symbols: list[str], days: int):
     async def process_symbol(client: httpx.AsyncClient, symbol: str):
         nonlocal total_inserted
         async with semaphore:
+            await asyncio.sleep(1)  # ~2 req/s with CONCURRENCY=2 → stays under 60 req/min
             rows = await fetch_price_history(client, symbol)
             if not rows:
                 return
