@@ -108,18 +108,42 @@ print(f'Scheduler TZ: {settings.scheduler_timezone}')
 
 | Table | Purpose | Retention |
 |-------|---------|-----------|
-| `stock_prices` | Real-time OHLCV data | All (indexed by symbol, time) |
+| `stock_prices` | Real-time + backfill OHLCV data | All (indexed by symbol, time, ltp) |
 | `floorsheet` | Transaction-level trades | 90 days (auto-cleanup weekly) |
 | `market_status` | Daily open/closed status | All |
-| `ai_insights` | Claude-generated insights | All |
+| `market_summaries` | Daily NEPSE index + turnover snapshots | All |
+| `ai_insights` | Claude-generated market insights (multi-type) | All |
+| `stock_insights` | Per-symbol Claude AI insights | All |
+| `daily_sector_index` | Daily sector performance (upserted intraday) | All |
+| `daily_market_breadth` | Daily advance/decline/unchanged (upserted intraday) | All |
+| `news` | Market and stock news articles | All |
 
 ## API Endpoints
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/health` | Server health + scheduler status |
-| GET | `/api/stocks/latest` | Latest price for all symbols |
-| GET | `/api/stocks/{symbol}/floorsheet` | Recent trades for symbol |
+| GET | `/api/market/overview` | NEPSE index, market status, breadth summary |
+| GET | `/api/market/sectors?range=1D` | Sector performance |
+| GET | `/api/market/top-gainers?range=1D` | Top gaining stocks |
+| GET | `/api/market/top-losers?range=1D` | Top losing stocks |
+| GET | `/api/market/top-turnover?range=1D` | Highest turnover stocks |
+| GET | `/api/market/breadth?range=1D` | Advance/decline/unchanged counts |
+| GET | `/api/market/companies` | Full company list for search autocomplete |
+| GET | `/api/index/history?range=1D&interval=1min` | NEPSE index OHLCV history |
+| GET | `/api/stocks/{symbol}/history` | Stock price history |
+| GET | `/api/stocks/{symbol}/chart?range=1D` | Stock chart (line or candlestick) |
+| GET | `/api/stocks/{symbol}/analysis` | Technical analysis (SMA, RSI, MACD, BB, signals) |
+| GET | `/api/stocks/{symbol}/floorsheet?limit=200&days=30` | Recent trades for symbol |
+| GET | `/api/stocks/{symbol}/insight/latest` | Latest AI insight for stock |
+| POST | `/api/stocks/{symbol}/insight` | Generate new AI insight for stock |
+| POST | `/api/stocks/{symbol}/chat` | Chat with Claude about a stock |
+| GET | `/api/stocks/{symbol}/news?limit=10` | News articles for stock |
+| GET | `/api/insights/latest?type=daily_close` | Latest market AI insight (optional type filter) |
+| GET | `/api/insights/history?limit=10` | Recent market AI insights |
+| GET | `/api/news?category=all&limit=20` | Paginated market news |
+| GET | `/api/admin/status` | Scheduler job record counts |
+| POST | `/api/admin/run/{action}` | Manually trigger scheduler actions |
 
 ## Next Steps
 

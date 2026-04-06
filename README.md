@@ -2,7 +2,7 @@
 
 A real-time financial dashboard for Nepal Stock Exchange (NEPSE) with AI-generated market insights. Built with Next.js, FastAPI, PostgreSQL, and Claude AI.
 
-**Status:** MVP complete. Backend + Frontend fully integrated. Awaiting live market data.
+**Status:** Feature-complete through Phase 3. Full market dashboard, stock detail pages, AI insights, news feed, and performance tuning all shipped.
 
 ---
 
@@ -25,26 +25,26 @@ A real-time financial dashboard for Nepal Stock Exchange (NEPSE) with AI-generat
 
 ## Features
 
-### Current (MVP - Phase 2)
-- ✅ **Real-time Index Chart** — NEPSE Index visualization (11 AM - 3 PM NPT)
-- ✅ **Top Gainers & Losers** — Stocks sorted by % change with tabbed interface
-- ✅ **Watchlist** — Customizable tracked symbols with price tracking
-- ✅ **AI Panel** — Read-only broadcast of market insights (powered by Claude)
-- ✅ **Time Range Selector** — 1D, 5D, 1M, 3M views (UI ready, data deferred)
-- ✅ **Desktop-first** — Optimized for 1280px+ screens
-- ✅ **Dark Theme** — Professional slate color scheme
-- ✅ **API Integration** — Backend-connected frontend with graceful fallback
-- ✅ **Production Build** — TypeScript strict mode, optimized bundle
+### Current (Phase 3 Complete)
+- ✅ **Real-time Index Chart** — NEPSE Index with area chart, 1D–5Y range selector, interval picker
+- ✅ **Sector Performance** — Intraday sector heatmap with range/interval filtering
+- ✅ **Top Gainers, Losers & Turnover Leaders** — Live % change and volume rankings
+- ✅ **Market Breadth** — Advance/decline/unchanged breakdown widget
+- ✅ **Trading Floorsheet** — Per-symbol trade history modal (buyer/seller/qty/rate)
+- ✅ **Stock Detail Pages** — Full `/stock/{symbol}` page: candlestick chart, SMA/EMA/BB overlays, technicals, signals, returns, volatility, relative performance, floorsheet table
+- ✅ **AI Insights** — Claude-generated market summaries: open briefing, hourly update, daily close, weekly wrap — with insight type badge and history timeline
+- ✅ **Per-Stock AI Insight & Chat** — Individual stock insight generation + interactive chat
+- ✅ **News Feed** — Market and per-stock news with category filters
+- ✅ **Symbol Search** — Autocomplete in header navigates to stock detail page
+- ✅ **Admin Controls** — Manual scheduler trigger panel (collapsed footer)
+- ✅ **Desktop-first** — Optimized for 1280px+ screens, dark slate theme
+- ✅ **Production Build** — TypeScript strict mode, Docker Compose, optimized bundle
 
-### Planned (Phase 3+)
-- 🔄 **Live Price Updates** — WebSocket integration for 1-5 second refresh
-- 🔄 **Claude AI Integration** — Hourly market summary generation
-- 🔄 **Trading Floorsheet** — Detailed trade history modal
-- 🔄 **Search & Filtering** — Symbol lookup, sector views
-- 🔄 **Historical Charts** — 5D, 1M, 3M+ data with technical analysis
-- 🔄 **Alerts** — Price targets, volume spikes
+### Planned (Phase 4+)
 - 🔄 **Mobile Responsive** — Full responsive design
 - 🔄 **Authentication** — Multi-user support with saved preferences
+- 🔄 **Price Alerts** — Price targets, volume spike notifications
+- 🔄 **Additional Data Sources** — ShareSansar, Merolagani integration
 
 ---
 
@@ -65,9 +65,9 @@ A real-time financial dashboard for Nepal Stock Exchange (NEPSE) with AI-generat
 └────────────────┬────────────────────────┬───────────────────────┘
                  │                        │
         ┌────────▼────────┐       ┌───────▼───────┐
-        │  Backend        │       │   (Reserved)  │
-        │  FastAPI :8080  │       │  Claude API   │
-        │  ✓ Scheduler    │       │  (Phase 3)    │
+        │  Backend        │       │  Claude API   │
+        │  FastAPI :8080  │       │  ✓ AI insights│
+        │  ✓ Scheduler    │       │  ✓ Stock chat │
         │  ✓ Data Ingestion       │               │
         │  ✓ REST API     │       └───────────────┘
         └────────┬────────┘
@@ -107,7 +107,7 @@ A real-time financial dashboard for Nepal Stock Exchange (NEPSE) with AI-generat
          └─► Browser (Desktop)
              Desktop-only (1280px+)
              Dark theme
-             Real-time updates (Phase 3)
+             Polling with jitter (30s–60s)
 ```
 
 ### Data Flow
@@ -132,8 +132,8 @@ A real-time financial dashboard for Nepal Stock Exchange (NEPSE) with AI-generat
 | PostgreSQL (not TimescaleDB) | Simpler setup, sufficient for MVP | ✅ Locked |
 | Plain FastAPI (not Django) | Lightweight, async-ready for Phase 3 | ✅ Locked |
 | APScheduler (not background workers) | Built-in, timezone-aware cron | ✅ Locked |
-| Server-side WebSocket proxy | Avoid client fan-out, single connection | 🔄 Phase 3 |
-| Claude API (not local LLM) | Better quality insights, MCP integration | 🔄 Phase 3 |
+| Polling + jitter (not WebSocket) | NepseAPI data is 10-min cached upstream; faster polling achieves same result | ✅ Locked |
+| Claude API (not local LLM) | Better quality insights; Haiku for speed, Sonnet for depth | ✅ Locked |
 | 4 modules (not more) | MVP scope, highest-impact features | ✅ Locked |
 | Read-only AI Panel (no chat) | Broadcast, not conversation | ✅ Locked |
 | Desktop-only MVP | Focus on core experience first | ✅ Locked |
@@ -163,7 +163,7 @@ A real-time financial dashboard for Nepal Stock Exchange (NEPSE) with AI-generat
 - **Containerization:** Docker + Docker Compose
 - **Database:** PostgreSQL 16-Alpine
 - **API Data Source:** NepseAPI-Unofficial (self-hosted)
-- **AI:** Claude API (Phase 3)
+- **AI:** Claude API (active — Haiku for hourly, Sonnet for close/weekly)
 
 ### Development
 - **Package Manager:** npm (frontend), pip (backend)
@@ -179,26 +179,39 @@ A real-time financial dashboard for Nepal Stock Exchange (NEPSE) with AI-generat
 ```
 nepselligence/
 ├── backend/
-│   ├── config.py           # Environment config (NEPSE_API_URL, DATABASE_URL, etc.)
-│   ├── database.py         # SQLAlchemy engine + session factory
-│   ├── models.py           # 4 ORM models (StockPrice, Floorsheet, MarketStatus, AIInsight)
+│   ├── config.py           # Environment config (NEPSE_API_URL, DATABASE_URL, CLAUDE_API_KEY, etc.)
+│   ├── database.py         # SQLAlchemy engine + session factory (pool_size=20)
+│   ├── models.py           # ORM models: StockPrice, Floorsheet, MarketSummary, AIInsight, News, …
 │   ├── providers.py        # DataProvider abstraction (primary/fallback)
-│   ├── scheduler.py        # APScheduler jobs + market guard
-│   ├── main.py             # FastAPI app + 3 endpoints (/health, /api/stocks/*, /api/stocks/{}/floorsheet)
+│   ├── scheduler.py        # APScheduler jobs: price ingest, AI insights (open/hourly/close/weekly)
+│   ├── ai_insights.py      # Multi-type Claude insight generation with holiday guard
+│   ├── main.py             # FastAPI app — 30+ endpoints covering stocks, sectors, insights, news
 │   └── requirements.txt     # (deprecated, see pyproject.toml)
 ├── frontend/
 │   ├── src/
 │   │   ├── app/
-│   │   │   ├── layout.tsx         # Root layout + metadata
-│   │   │   ├── page.tsx           # Dashboard page
-│   │   │   ├── globals.css        # Dark theme + desktop constraint
-│   │   │   └── favicon.ico
-│   │   └── components/
-│   │       ├── TimeRangeSelector.tsx  # 1D/5D/1M/3M buttons
-│   │       ├── IndexChart.tsx         # Recharts line chart (API-integrated)
-│   │       ├── TopMovers.tsx          # Gainers/Losers tabs (API-integrated)
-│   │       ├── Watchlist.tsx          # Symbol table (API-integrated)
-│   │       └── AIPanel.tsx            # Read-only insight broadcast
+│   │   │   ├── layout.tsx              # Root layout + metadata
+│   │   │   ├── page.tsx                # Dashboard (index chart, sectors, movers, breadth, AI, news)
+│   │   │   ├── stock/[symbol]/page.tsx # Stock detail page
+│   │   │   └── globals.css             # Dark theme + desktop constraint
+│   │   ├── components/
+│   │   │   ├── IndexChart.tsx          # NEPSE Index area chart (1D–5Y, all intervals)
+│   │   │   ├── SectorPerformance.tsx   # Sector heatmap widget
+│   │   │   ├── TopGainers/Losers.tsx   # Per-row floorsheet icon + symbol nav
+│   │   │   ├── TurnoverLeaders.tsx     # Volume leaders table
+│   │   │   ├── MarketBreadth.tsx       # Advance/decline/unchanged widget
+│   │   │   ├── AIPanel.tsx             # Insight broadcast with type badge + timeline
+│   │   │   ├── FloorsheetModal.tsx     # Raw trade history modal (portal)
+│   │   │   ├── NewsFeed.tsx            # Paginated market/per-stock news
+│   │   │   ├── AdminControls.tsx       # Manual scheduler triggers (footer)
+│   │   │   ├── MarketStatusBar.tsx     # Header with symbol autocomplete search
+│   │   │   ├── WidgetShell.tsx         # Card wrapper (memo'd)
+│   │   │   └── stock/                  # Stock detail cards (CandlestickChart, Technicals, Signals, …)
+│   │   ├── hooks/
+│   │   │   ├── usePolling.ts           # Interval polling with visibility + 20% jitter
+│   │   │   └── useAbortController.ts  # Clean fetch cancellation on unmount
+│   │   └── lib/
+│   │       └── api.ts                  # Typed fetch wrappers with in-flight deduplication
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── next.config.js
@@ -208,7 +221,7 @@ nepselligence/
 │   └── README.md
 ├── tests/
 │   └── test_critical_bugs.py   # 12 regression tests (T1-T12)
-├── docker-compose.yml          # 3 services: postgres, nepseapi, backend
+├── docker-compose.yml          # 4 services: postgres (tuned), nepseapi, backend (health check + limits), frontend
 ├── Dockerfile.backend          # Python 3.12 + dependencies
 ├── pyproject.toml              # Backend dependencies + build config
 ├── .env.example                # Backend .env template
@@ -418,8 +431,7 @@ Already set up in `docker-compose.yml`. For production:
 
 1. Update environment variables in `docker-compose.yml` or `.env`
 2. Use named volumes (not mounted paths)
-3. Add health checks for monitoring
-4. Set resource limits (CPU, memory)
+3. Health checks and resource limits are already configured in `docker-compose.yml` (backend: 2 CPU / 1 GB, postgres tuned with shared_buffers=256 MB)
 
 ```bash
 # Production deployment
@@ -558,25 +570,26 @@ npm run type-check
 
 ## Roadmap
 
-### Phase 3 (April 2026)
-- [ ] WebSocket proxy for live price updates (1-5 second refresh)
-- [ ] Claude API integration for hourly market summaries
-- [ ] Floorsheet detail modal (click symbol → trade history)
-- [ ] Search bar + symbol lookup
-- [ ] Historical chart data (5D, 1M, 3M)
+### Phase 3 (April 2026) — Complete
+- [x] Claude AI integration — open/hourly/daily close/weekly wrap insights
+- [x] Per-stock AI insight generation + interactive chat
+- [x] Floorsheet detail modal (click symbol → raw trade history)
+- [x] Symbol search with autocomplete
+- [x] Historical chart data (1D–5Y) with candlestick + technical overlays
+- [x] News feed (market-wide and per-stock)
+- [x] System-wide performance tuning (DB pool, React.memo, request deduplication, polling jitter)
+- [x] WebSocket intentionally skipped — NepseAPI data is 10-min cached upstream; polling is sufficient
 
 ### Phase 4 (May 2026)
 - [ ] Mobile responsive design
 - [ ] User authentication + multi-user support
 - [ ] Saved watchlists (user preferences)
-- [ ] Advanced analytics (MA, RSI, Bollinger Bands)
 - [ ] Price alerts + notifications
 
 ### Phase 5+ (June 2026+)
 - [ ] Additional data sources (ShareSansar, Merolagani)
 - [ ] Macro indicators (GDP, inflation, forex)
 - [ ] Fundamental analysis (P/E, dividend yield)
-- [ ] Trading simulator
 - [ ] Mobile app (React Native)
 
 ---
@@ -653,11 +666,14 @@ MIT License. See LICENSE file.
 │   ├── Error handling    ✅ Graceful fallback to mock data
 │   └── Testing           ✅ End-to-end verified
 │
-├── Phase 3 (Enhancements) 🔄 Ready to start
-│   ├── WebSocket proxy   ⏳ Planned
-│   ├── Claude API        ⏳ Planned
-│   ├── Floorsheet modal  ⏳ Planned
-│   └── Search            ⏳ Planned
+├── Phase 3 (Enhancements) ✅ Complete
+│   ├── AI insights       ✅ Multi-type (open/hourly/close/weekly)
+│   ├── Stock detail page ✅ Candlestick + technicals + chat
+│   ├── Floorsheet modal  ✅ Raw trade history
+│   ├── Search            ✅ Autocomplete symbol navigation
+│   ├── Historical charts ✅ 1D–5Y with overlays
+│   ├── News feed         ✅ Market + per-stock
+│   └── Perf tuning       ✅ DB pool, React.memo, dedup
 │
 └── Phase 4+ (Scale)      📋 Backlog
     ├── Mobile responsive ⏳
@@ -665,7 +681,7 @@ MIT License. See LICENSE file.
     └── Analytics         ⏳
 ```
 
-**Last Updated:** 2026-04-05  
+**Last Updated:** 2026-04-06  
 **Next Milestone:** Live market data integration (depends on market hours)
 
 ---
