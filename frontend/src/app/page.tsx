@@ -114,17 +114,17 @@ export default function Dashboard() {
           {/* ROW 2: Top Gainers + Top Losers + Turnover Leaders */}
           <div className="grid grid-cols-12 gap-6 mb-6">
             <div className="col-span-3">
-              <WidgetShell title="Top Gainers" className="max-h-96 overflow-y-auto">
+              <WidgetShell title="Top Gainers" className="h-[26rem] overflow-y-auto">
                 <TopGainers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
             <div className="col-span-3">
-              <WidgetShell title="Top Losers" className="max-h-96 overflow-y-auto">
+              <WidgetShell title="Top Losers" className="h-[26rem] overflow-y-auto">
                 <TopLosers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
             <div className="col-span-6">
-              <WidgetShell title="Turnover Leaders" className="h-96">
+              <WidgetShell title="Turnover Leaders" className="h-[26rem]">
                 <TurnoverLeaders isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
@@ -133,12 +133,12 @@ export default function Dashboard() {
           {/* ROW 3: Market Breadth + AI Insights */}
           <div className="grid grid-cols-12 gap-6 mb-6">
             <div className="col-span-4">
-              <WidgetShell title="Market Breadth" className="h-64">
+              <WidgetShell title="Market Breadth" className="h-96">
                 <MarketBreadthWidget isOpen={isOpen} range={range} />
               </WidgetShell>
             </div>
             <div className="col-span-8">
-              <div className="h-64">
+              <div className="h-96">
                 <AIPanel isOpen={isOpen} />
               </div>
             </div>

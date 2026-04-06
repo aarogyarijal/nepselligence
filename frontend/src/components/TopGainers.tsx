@@ -34,9 +34,10 @@ export default function TopGainers({ isOpen, range, onSymbolClick, onFloorsheetC
 
   return (
     <div>
-      <div className="grid grid-cols-6 gap-1 pb-2 mb-1 border-b border-slate-700 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+      <div className="grid gap-1 pb-2 mb-1 border-b border-slate-700 text-xs font-semibold text-slate-500 uppercase tracking-wider"
+           style={{ gridTemplateColumns: '1.2rem 1fr 4.5rem 3.5rem 1.2rem' }}>
         <div>#</div>
-        <div className="col-span-2">Symbol</div>
+        <div>Symbol</div>
         <div className="text-right">LTP</div>
         <div className="text-right">%</div>
         <div />
@@ -57,22 +58,22 @@ export default function TopGainers({ isOpen, range, onSymbolClick, onFloorsheetC
             return (
               <div
                 key={stock.symbol}
-                className="group grid grid-cols-6 gap-1 py-1.5 px-2 rounded text-xs hover:bg-slate-800 transition-colors"
-                style={{ backgroundColor: `rgba(22, 163, 74, ${intensity * 0.15})` }}
+                className="group grid gap-1 py-1.5 px-2 rounded text-xs hover:bg-slate-800 transition-colors items-center"
+                style={{ gridTemplateColumns: '1.2rem 1fr 4.5rem 3.5rem 1.2rem', backgroundColor: `rgba(22, 163, 74, ${intensity * 0.15})` }}
               >
-                <div className="text-slate-500 self-center">{stock.rank}</div>
+                <div className="text-slate-500">{stock.rank}</div>
                 <button
                   onClick={() => onSymbolClick(stock.symbol)}
-                  className="col-span-2 font-semibold text-white text-left hover:text-blue-300 transition-colors"
+                  className="font-semibold text-white text-left hover:text-blue-300 transition-colors truncate"
                   title={`View ${stock.symbol} analysis`}
                 >
                   {stock.symbol}
                 </button>
-                <div className="text-right text-slate-300 self-center">{formatPrice(stock.ltp)}</div>
-                <div className="text-right text-up font-medium self-center">
+                <div className="text-right text-slate-300 tabular-nums">{formatPrice(stock.ltp)}</div>
+                <div className="text-right text-up font-medium whitespace-nowrap tabular-nums">
                   ▲ {formatChangePct(stock.changePct)}
                 </div>
-                {onFloorsheetClick && (
+                {onFloorsheetClick ? (
                   <button
                     onClick={() => onFloorsheetClick(stock.symbol)}
                     className="text-slate-600 hover:text-slate-300 transition-colors text-right opacity-0 group-hover:opacity-100"
@@ -80,7 +81,7 @@ export default function TopGainers({ isOpen, range, onSymbolClick, onFloorsheetC
                   >
                     ≡
                   </button>
-                )}
+                ) : <div />}
               </div>
             )
           })}
