@@ -852,6 +852,247 @@ async def get_stock_history(symbol: str):
         db.close()
 
 
+@app.get("/api/stocks/{symbol}/analysis")
+async def get_stock_analysis(symbol: str):
+    """Full stock analysis: price, returns, technicals, volume, volatility, signals, floorsheet."""
+    from .cache import get_cache, make_envelope
+    from .indicators import (
+        sma, sma_series, ema, rsi as calc_rsi, macd as calc_macd,
+        bollinger, bollinger_series, atr as calc_atr,
+        period_return, historical_volatility, derive_signals,
+    )
+    from sqlalchemy import text
+
+    sym = symbol.upper()
+    cache_key = f"stock_analysis:{sym}"
+    cache = get_cache()
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    db = SessionLocal()
+    try:
+        # --- Fetch all price rows for symbol (backfill + live) ---
+        rows = db.query(StockPrice).filter(
+            StockPrice.symbol == sym,
+        ).order_by(StockPrice.time.asc()).all()
+
+        if not rows:
+            return make_envelope(None, "db")
+
+        # Build arrays
+        closes  = [r.ltp for r in rows]
+        highs   = [r.high  if r.high  is not None else r.ltp for r in rows]
+        lows    = [r.low   if r.low   is not None else r.ltp for r in rows]
+        volumes = [r.volume   or 0 for r in rows]
+        turnovers = [r.turnover or 0 for r in rows]
+        dates   = [r.time.date().isoformat() for r in rows]
+
+        ltp = closes[-1]
+        prev_close = closes[-2] if len(closes) >= 2 else None
+
+        # Use DB change fields if available (live data), else compute from closes
+        last_row = rows[-1]
+        change_val = last_row.change if last_row.change is not None else (
+            round(ltp - prev_close, 2) if prev_close else None
+        )
+        change_pct = last_row.change_percent if last_row.change_percent is not None else (
+            round(((ltp - prev_close) / prev_close) * 100, 2) if prev_close else None
+        )
+
+        # --- 52W metrics ---
+        cutoff_1y = datetime.now(timezone.utc) - timedelta(days=365)
+        rows_1y = [r for r in rows if r.time >= cutoff_1y]
+        closes_1y = [r.ltp for r in rows_1y]
+        highs_1y  = [r.high or r.ltp for r in rows_1y]
+        lows_1y   = [r.low  or r.ltp for r in rows_1y]
+
+        high52w = max(highs_1y) if highs_1y else max(highs)
+        low52w  = min(lows_1y)  if lows_1y  else min(lows)
+        all_time_high = max(highs)
+        range_pos = round((ltp - low52w) / (high52w - low52w), 3) if high52w != low52w else 0.5
+
+        # --- Period returns (trading days in lists) ---
+        # Map approximate calendar days → list index lookback
+        lookbacks = {"1d": 1, "5d": 5, "1m": 22, "3m": 66, "6m": 132, "1y": 220}
+        returns = {k: period_return(closes, v) for k, v in lookbacks.items()}
+
+        # --- Technical indicators ---
+        sma20  = sma(closes, 20)
+        sma50  = sma(closes, 50)
+        sma200 = sma(closes, 200)
+        ema12  = ema(closes, 12)
+        ema26  = ema(closes, 26)
+        rsi14  = calc_rsi(closes, 14)
+        macd_d = calc_macd(closes)
+        bb     = bollinger(closes, 20)
+        atr14  = calc_atr(highs, lows, closes, 14)
+
+        # Chart overlay series
+        sma20_series  = sma_series(closes, dates, 20)
+        sma50_series  = sma_series(closes, dates, 50)
+        sma200_series = sma_series(closes, dates, 200)
+        bb_series     = bollinger_series(closes, dates, 20)
+
+        # --- Volume analytics ---
+        vol_latest = volumes[-1] if volumes else None
+        avg20d_vol  = round(sum(volumes[-20:]) / min(len(volumes), 20), 0) if volumes else None
+        avg90d_vol  = round(sum(volumes[-90:]) / min(len(volumes), 90), 0) if volumes else None
+        vol_ratio   = round(vol_latest / avg20d_vol, 2) if avg20d_vol and avg20d_vol > 0 else None
+        avg_turnover20d = round(sum(turnovers[-20:]) / min(len(turnovers), 20), 0) if turnovers else None
+
+        # --- Volatility ---
+        vol_stats = historical_volatility(closes, 30)
+        ranges20d = [(highs[i] - lows[i]) for i in range(-min(20, len(closes)), 0)]
+        avg_range20d = round(sum(ranges20d) / len(ranges20d), 2) if ranges20d else None
+
+        # --- Relative performance vs NEPSE ---
+        cutoff_30d = datetime.now(timezone.utc) - timedelta(days=45)
+        nepse_rows = db.query(MarketSummary).filter(
+            MarketSummary.time >= cutoff_30d
+        ).order_by(MarketSummary.time.asc()).all()
+
+        rel_perf = None
+        if nepse_rows and len(nepse_rows) >= 2:
+            nepse_old = nepse_rows[0].nepse_index
+            nepse_new = nepse_rows[-1].nepse_index
+            if nepse_old and nepse_old > 0:
+                nepse_ret30 = round(((nepse_new - nepse_old) / nepse_old) * 100, 2)
+                stock_ret30 = period_return(closes, 30) or period_return(closes, len(closes) - 1)
+                alpha = round(stock_ret30 - nepse_ret30, 2) if stock_ret30 is not None else None
+                rel_perf = {
+                    "stockReturn30d": stock_ret30,
+                    "nepseReturn30d": nepse_ret30,
+                    "alpha30d": alpha,
+                }
+
+        # --- Floorsheet insights ---
+        cutoff_fs = datetime.now(timezone.utc) - timedelta(days=30)
+        fs_stats = db.execute(text("""
+            SELECT
+                SUM(quantity * rate) / NULLIF(SUM(quantity), 0) AS vwap,
+                AVG(quantity)  AS avg_trade_size,
+                COUNT(*)       AS total_trades
+            FROM floorsheet
+            WHERE symbol = :sym AND time >= :cutoff
+        """), {"sym": sym, "cutoff": cutoff_fs}).fetchone()
+
+        top_buyers = db.execute(text("""
+            SELECT buyer AS broker, SUM(quantity) AS total_qty, COUNT(*) AS trades
+            FROM floorsheet
+            WHERE symbol = :sym AND time >= :cutoff
+            GROUP BY buyer ORDER BY total_qty DESC LIMIT 5
+        """), {"sym": sym, "cutoff": cutoff_fs}).fetchall()
+
+        top_sellers = db.execute(text("""
+            SELECT seller AS broker, SUM(quantity) AS total_qty, COUNT(*) AS trades
+            FROM floorsheet
+            WHERE symbol = :sym AND time >= :cutoff
+            GROUP BY seller ORDER BY total_qty DESC LIMIT 5
+        """), {"sym": sym, "cutoff": cutoff_fs}).fetchall()
+
+        floorsheet_data = None
+        if fs_stats and fs_stats.total_trades and fs_stats.total_trades > 0:
+            floorsheet_data = {
+                "topBuyers": [
+                    {"broker": r.broker, "quantity": int(r.total_qty), "trades": int(r.trades)}
+                    for r in top_buyers
+                ],
+                "topSellers": [
+                    {"broker": r.broker, "quantity": int(r.total_qty), "trades": int(r.trades)}
+                    for r in top_sellers
+                ],
+                "avgTradeSize": round(fs_stats.avg_trade_size, 0) if fs_stats.avg_trade_size else None,
+                "vwap": round(fs_stats.vwap, 2) if fs_stats.vwap else None,
+                "totalTrades": int(fs_stats.total_trades),
+            }
+
+        # --- Company name + sector ---
+        sector = _NEPSE_SECTORS.get(sym)
+        company_name = None
+        cached_companies = cache.get("company_list")
+        if cached_companies and isinstance(cached_companies, dict):
+            for c in (cached_companies.get("data") or []):
+                if c.get("symbol") == sym:
+                    company_name = c.get("name")
+                    break
+
+        # --- Signals ---
+        signals = derive_signals(ltp, sma20, sma50, sma200, rsi14, vol_ratio)
+
+        # --- Full OHLCV history for chart ---
+        history = [
+            {
+                "date": r.time.date().isoformat(),
+                "open": r.open,
+                "high": r.high,
+                "low": r.low,
+                "close": r.ltp,
+                "volume": r.volume,
+                "turnover": r.turnover,
+            }
+            for r in rows
+        ]
+
+        data = {
+            "symbol": sym,
+            "name": company_name,
+            "sector": sector,
+            "price": {
+                "ltp": ltp,
+                "change": change_val,
+                "changePct": change_pct,
+                "high52w": high52w,
+                "low52w": low52w,
+                "allTimeHigh": all_time_high,
+                "rangePosition": range_pos,
+                "prevClose": prev_close,
+            },
+            "returns": returns,
+            "technicals": {
+                "sma20": sma20,
+                "sma50": sma50,
+                "sma200": sma200,
+                "ema12": ema12,
+                "ema26": ema26,
+                "rsi14": rsi14,
+                "macd": macd_d,
+                "bollingerBands": bb,
+                "atr14": atr14,
+            },
+            "volume": {
+                "latest": vol_latest,
+                "avg20d": avg20d_vol,
+                "avg90d": avg90d_vol,
+                "volumeRatio": vol_ratio,
+                "avgTurnover20d": avg_turnover20d,
+            },
+            "volatility": {
+                "daily30d": vol_stats["daily30d"] if vol_stats else None,
+                "annualized30d": vol_stats["annualized30d"] if vol_stats else None,
+                "avgDailyRange20d": avg_range20d,
+            },
+            "relativePerformance": rel_perf,
+            "floorsheet": floorsheet_data,
+            "history": history,
+            "overlays": {
+                "sma20":          sma20_series,
+                "sma50":          sma50_series,
+                "sma200":         sma200_series,
+                "bollingerUpper": [{"date": d["date"], "value": d["upper"]} for d in bb_series],
+                "bollingerLower": [{"date": d["date"], "value": d["lower"]} for d in bb_series],
+            },
+            "signals": signals,
+        }
+
+        envelope = make_envelope(data, "db")
+        cache.set(cache_key, envelope, ttl=300)
+        return envelope
+
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)

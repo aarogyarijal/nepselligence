@@ -3,11 +3,20 @@
 import { useEffect, useRef } from 'react'
 import type { OHLCVPoint } from '@/types/market'
 
-interface CandlestickChartProps {
-  data: OHLCVPoint[]
+export interface ChartOverlay {
+  label: string
+  data: { date: string; value: number }[]
+  color: string
+  dashed?: boolean
 }
 
-export default function CandlestickChart({ data }: CandlestickChartProps) {
+interface CandlestickChartProps {
+  data: OHLCVPoint[]
+  overlays?: ChartOverlay[]
+  height?: number
+}
+
+export default function CandlestickChart({ data, overlays = [], height = 280 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<unknown>(null)
 
@@ -17,7 +26,7 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
     let chart: ReturnType<typeof import('lightweight-charts')['createChart']>
 
     const init = async () => {
-      const { createChart, ColorType } = await import('lightweight-charts')
+      const { createChart, ColorType, LineStyle } = await import('lightweight-charts')
 
       if (!containerRef.current) return
 
@@ -34,7 +43,7 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
         rightPriceScale: { borderColor: '#334155' },
         timeScale: { borderColor: '#334155', timeVisible: true },
         width: containerRef.current.clientWidth,
-        height: 280,
+        height,
       })
       chartRef.current = chart
 
@@ -84,6 +93,27 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
         .sort((a, b) => a.time.localeCompare(b.time))
 
       volumeSeries.setData(volumeData)
+
+      // Overlay line series (SMA, Bollinger, etc.)
+      for (const overlay of overlays) {
+        const lineSeries = chart.addLineSeries({
+          color: overlay.color,
+          lineWidth: 1,
+          lineStyle: overlay.dashed ? LineStyle.Dashed : LineStyle.Solid,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        })
+        const lineData = overlay.data
+          .filter(d => d.value != null)
+          .map(d => ({
+            time: d.date as `${number}-${number}-${number}`,
+            value: d.value,
+          }))
+          .sort((a, b) => a.time.localeCompare(b.time))
+        lineSeries.setData(lineData)
+      }
+
       chart.timeScale().fitContent()
 
       // Resize observer
@@ -106,7 +136,7 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
     return () => {
       cleanup?.()
     }
-  }, [data])
+  }, [data, overlays, height])
 
   return <div ref={containerRef} />
 }

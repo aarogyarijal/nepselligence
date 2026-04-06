@@ -10,6 +10,7 @@ import type {
   OHLCVPoint,
   Company,
   AIInsight,
+  StockAnalysis,
 } from '@/types/market'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
@@ -50,6 +51,10 @@ export async function fetchCompanies(): Promise<ApiEnvelope<Company[]>> {
 
 export async function fetchStockHistory(symbol: string): Promise<ApiEnvelope<OHLCVPoint[]>> {
   return get(`/api/stocks/${encodeURIComponent(symbol)}/history`)
+}
+
+export async function fetchStockAnalysis(symbol: string): Promise<ApiEnvelope<StockAnalysis | null>> {
+  return get(`/api/stocks/${encodeURIComponent(symbol)}/analysis`)
 }
 
 export async function fetchIndexHistory(range: string): Promise<{ time: string; value: number }[]> {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { MarketStatusCtx } from '@/hooks/useMarketStatus'
 import MarketStatusBar from '@/components/MarketStatusBar'
 import IndexChart from '@/components/IndexChart'
@@ -10,7 +11,6 @@ import TopLosers from '@/components/TopLosers'
 import TurnoverLeaders from '@/components/TurnoverLeaders'
 import MarketBreadthWidget from '@/components/MarketBreadth'
 import AIPanel from '@/components/AIPanel'
-import StockDetail from '@/components/StockDetail'
 import AdminControls from '@/components/AdminControls'
 import WidgetShell from '@/components/WidgetShell'
 import { fetchMarketOverview } from '@/lib/api'
@@ -20,9 +20,9 @@ export type TimeRange = '1D' | '5D' | '1M' | '3M' | '6M' | '1Y' | '5Y'
 const RANGES: TimeRange[] = ['1D', '5D', '1M', '3M', '6M', '1Y', '5Y']
 
 export default function Dashboard() {
+  const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
-  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
   const [range, setRange] = useState<TimeRange>('1D')
 
   const loadMarketStatus = async () => {
@@ -39,10 +39,7 @@ export default function Dashboard() {
   usePolling(loadMarketStatus, 60_000, true)
 
   const handleSymbolSelect = (symbol: string) => {
-    setSelectedSymbol(symbol)
-    setTimeout(() => {
-      document.getElementById('stock-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }, 100)
+    router.push(`/stock/${encodeURIComponent(symbol)}`)
   }
 
   return (
@@ -121,21 +118,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* ROW 4: Stock Detail (visible when symbol selected) */}
-          {selectedSymbol && (
-            <div id="stock-detail" className="mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <span />
-                <button
-                  onClick={() => setSelectedSymbol(null)}
-                  className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
-                >
-                  ✕ Close
-                </button>
-              </div>
-              <StockDetail symbol={selectedSymbol} />
-            </div>
-          )}
         </main>
 
         {/* W10: Admin Controls (collapsed footer) */}
