@@ -1,7 +1,10 @@
 """APScheduler jobs for NEPSE data ingestion."""
 
 import logging
+import zoneinfo
 from datetime import datetime, timezone
+
+NPT = zoneinfo.ZoneInfo("Asia/Kathmandu")
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -30,15 +33,15 @@ class IngestionScheduler:
         logger.info("Starting scheduler...")
 
         # NEPSE market days: Sun-Thu (Nepal trades Sun through Thu)
-        # Market hours: 11 AM - 3 PM NPT — fires every 5 minutes (matches NepseAPI 10-min cache TTL)
+        # Market hours: 11 AM - 3 PM NPT — fires every 10 minutes (matches NepseAPI 10-min cache TTL)
         market_trigger = CronTrigger(
             hour="11-15",
-            minute="*/5",
+            minute="*/10",
             day_of_week="0-3,6",  # Mon-Thu (0-3) + Sun (6) = NEPSE trading days
             timezone=settings.scheduler_timezone,
         )
 
-        # Market snapshot job: every 5 min during market hours (sectors, breadth, movers)
+        # Market snapshot job: every 10 min during market hours (sectors, breadth, movers)
         self.scheduler.add_job(
             self.ingest_market_snapshot,
             market_trigger,
@@ -49,7 +52,7 @@ class IngestionScheduler:
             misfire_grace_time=300,
         )
 
-        # Live prices job: every 5 min during market hours
+        # Live prices job: every 10 min during market hours
         self.scheduler.add_job(
             self.ingest_live_prices,
             market_trigger,
@@ -60,7 +63,7 @@ class IngestionScheduler:
             misfire_grace_time=300,
         )
 
-        # Market summary + NEPSE index job: same 5-min cadence
+        # Market summary + NEPSE index job: same 10-min cadence
         self.scheduler.add_job(
             self.ingest_market_summary,
             market_trigger,
@@ -141,7 +144,7 @@ class IngestionScheduler:
             misfire_grace_time=600,
         )
 
-        # Floorsheet ingestion: every 5 min during market hours (same cadence as live prices)
+        # Floorsheet ingestion: every 10 min during market hours (same cadence as live prices)
         self.scheduler.add_job(
             self.ingest_floorsheet,
             market_trigger,
@@ -584,7 +587,7 @@ class IngestionScheduler:
                     "isOpen": True,
                     "indices": indices,
                     "summary": summary_dict,
-                    "lastUpdated": datetime.now(timezone.utc).isoformat(),
+                    "lastUpdated": datetime.now(NPT).isoformat(),
                 }
                 cache.set("market_overview", make_envelope(overview, "live"), ttl=300)  # 5 min
 

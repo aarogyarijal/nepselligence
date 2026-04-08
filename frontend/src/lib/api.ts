@@ -77,18 +77,18 @@ export async function fetchStockAnalysis(symbol: string): Promise<ApiEnvelope<St
   return get(`/api/stocks/${encodeURIComponent(symbol)}/analysis`)
 }
 
-export async function fetchIndexHistory(range: string, interval = ''): Promise<{ time: string; value: number }[]> {
+export async function fetchIndexHistory(range: string, interval = '', signal?: AbortSignal): Promise<{ time: string; value: number }[]> {
   const params = new URLSearchParams({ range })
   if (interval) params.set('interval', interval)
-  const res = await fetch(`${API_URL}/api/index/history?${params}`, { mode: 'cors' })
+  const res = await fetch(`${API_URL}/api/index/history?${params}`, { mode: 'cors', signal })
   if (!res.ok) return []
   return res.json()
 }
 
-export async function fetchStockChart(symbol: string, range: string, interval = ''): Promise<StockChartResponse> {
+export async function fetchStockChart(symbol: string, range: string, interval = '', signal?: AbortSignal): Promise<StockChartResponse> {
   const params = new URLSearchParams({ range })
   if (interval) params.set('interval', interval)
-  const res = await fetch(`${API_URL}/api/stocks/${encodeURIComponent(symbol)}/chart?${params}`, { mode: 'cors' })
+  const res = await fetch(`${API_URL}/api/stocks/${encodeURIComponent(symbol)}/chart?${params}`, { mode: 'cors', signal })
   if (!res.ok) return { type: 'line', interval: interval as StockChartResponse['interval'] || '1min', range, data: [] }
   return res.json()
 }
@@ -135,10 +135,10 @@ export async function fetchStockIntraday(symbol: string): Promise<IntradayPoint[
   return res.json()
 }
 
-export async function fetchSectorsIntraday(range = 'today', interval = ''): Promise<SectorIntradayData> {
+export async function fetchSectorsIntraday(range = 'today', interval = '', signal?: AbortSignal): Promise<SectorIntradayData> {
   const params = new URLSearchParams({ range })
   if (interval) params.set('interval', interval)
-  const res = await fetch(`${API_URL}/api/sectors/intraday?${params}`, { mode: 'cors' })
+  const res = await fetch(`${API_URL}/api/sectors/intraday?${params}`, { mode: 'cors', signal })
   if (!res.ok) return {}
   return res.json()
 }

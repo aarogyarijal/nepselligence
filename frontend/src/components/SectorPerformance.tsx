@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState, useCallback, memo } from 'react'
+import { useEffect, useState, useRef, memo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Cell, ReferenceLine,
   Tooltip, ResponsiveContainer, LineChart, Line,
 } from 'recharts'
 import { fetchSectors, fetchSectorsIntraday } from '@/lib/api'
+import { CHART_COLORS, rechartsTooltipStyle } from '@/lib/chartTheme'
 import { usePolling } from '@/hooks/usePolling'
 import type { SectorData, IntradayPoint, TimeInterval } from '@/types/market'
 import type { TimeRange } from '@/app/page'
@@ -16,8 +17,8 @@ interface SectorPerformanceProps {
   interval?: TimeInterval
 }
 
-const UP = '#16a34a'
-const DOWN = '#dc2626'
+const UP = CHART_COLORS.up
+const DOWN = CHART_COLORS.down
 
 function Sparkline({ points, color }: { points: IntradayPoint[]; color: string }) {
   if (points.length < 2) return null
@@ -41,37 +42,67 @@ function SectorPerformance({ isOpen, range, interval = '1min' }: SectorPerforman
   const [sectors, setSectors] = useState<SectorData[]>([])
   const [intraday, setIntraday] = useState<Record<string, IntradayPoint[]>>({})
   const [loading, setLoading] = useState(true)
+  const abortRef = useRef<AbortController | null>(null)
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    abortRef.current?.abort()
+    const ac = new AbortController()
+    abortRef.current = ac
+    setLoading(true)
+
+    const loadSectors = async () => {
+      try {
+        const envelope = await fetchSectors(range)
+        if (ac.signal.aborted) return
+        if (envelope.data && envelope.data.length > 0) {
+          setSectors([...envelope.data].sort((a, b) => b.changePct - a.changePct))
+        } else {
+          setSectors([])
+        }
+      } catch {
+        if (!ac.signal.aborted) setSectors([])
+      } finally {
+        if (!ac.signal.aborted) setLoading(false)
+      }
+    }
+
+    const loadIntraday = async () => {
+      if (interval === '1D') return
+      try {
+        const data = await fetchSectorsIntraday(range, interval, ac.signal)
+        if (ac.signal.aborted) return
+        setIntraday(data)
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        if (!ac.signal.aborted) setIntraday({})
+      }
+    }
+
+    loadSectors()
+    loadIntraday()
+
+    return () => ac.abort()
+  }, [range, interval])
+
+  const refreshSectors = async () => {
     try {
       const envelope = await fetchSectors(range)
       if (envelope.data && envelope.data.length > 0) {
         setSectors([...envelope.data].sort((a, b) => b.changePct - a.changePct))
-      } else {
-        setSectors([])
       }
-    } catch {
-      setSectors([])
-    } finally {
-      setLoading(false)
-    }
-  }, [range])
+    } catch {}
+  }
 
-  const loadIntraday = useCallback(async () => {
-    // Load intraday sparklines for 1D or sub-daily intervals on multi-day ranges
+  const refreshIntraday = async () => {
     if (interval === '1D') return
     try {
       const data = await fetchSectorsIntraday(range, interval)
       setIntraday(data)
-    } catch {
-      setIntraday({})
-    }
-  }, [range, interval])
+    } catch {}
+  }
 
-  useEffect(() => { setLoading(true); load() }, [load])
-  useEffect(() => { if (interval !== '1D') loadIntraday() }, [loadIntraday, interval])
-  usePolling(load, 300_000, isOpen && range === '1D')
-  usePolling(loadIntraday, 60_000, isOpen && range === '1D' && interval !== '1D')
+  usePolling(refreshSectors, 300_000, isOpen && range === 'today')
+  usePolling(refreshIntraday, 60_000, isOpen && range === 'today' && interval !== '1D')
 
   if (loading) {
     return (
@@ -154,9 +185,7 @@ function SectorPerformance({ isOpen, range, interval = '1min' }: SectorPerforman
         />
         <Tooltip
           formatter={(v: number) => [`${v >= 0 ? '+' : ''}${v.toFixed(2)}%`, 'Change']}
-          contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6 }}
-          labelStyle={{ color: '#f1f5f9' }}
-          itemStyle={{ color: '#94a3b8' }}
+          {...rechartsTooltipStyle()}
         />
         <ReferenceLine x={0} stroke="#475569" />
         <Bar dataKey="changePct" radius={[0, 3, 3, 0]} isAnimationActive={false}>

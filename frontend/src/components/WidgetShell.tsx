@@ -10,6 +10,7 @@ interface WidgetShellProps {
   emptyMessage?: string
   onRetry?: () => void
   className?: string
+  scrollable?: boolean
   children: ReactNode
 }
 
@@ -22,6 +23,7 @@ function WidgetShell({
   emptyMessage = 'No data available',
   onRetry,
   className = '',
+  scrollable = false,
   children,
 }: WidgetShellProps) {
   return (
@@ -35,7 +37,7 @@ function WidgetShell({
         <h2 className="text-xl font-semibold text-white mb-4 shrink-0">{title}</h2>
       )}
 
-      <div className="flex-1 min-h-0">
+      <div className={`flex-1 min-h-0${scrollable ? ' overflow-y-auto' : ''}`}>
       {loading ? (
         <div className="space-y-2 animate-pulse">
           <div className="h-4 bg-slate-700 rounded w-3/4" />

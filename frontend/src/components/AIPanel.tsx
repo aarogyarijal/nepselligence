@@ -296,11 +296,17 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        {loading ? (
+        {loading || generating ? (
           <div className="space-y-2 animate-pulse">
+            {generating && (
+              <p className="text-xs text-blue-400 mb-3 not-italic">Generating insight with Claude…</p>
+            )}
             <div className="h-4 bg-slate-700 rounded w-full" />
             <div className="h-4 bg-slate-700 rounded w-5/6" />
             <div className="h-4 bg-slate-700 rounded w-4/6" />
+            <div className="h-4 bg-slate-700 rounded w-3/4" />
+            <div className="h-4 bg-slate-700 rounded w-full" />
+            <div className="h-4 bg-slate-700 rounded w-2/3" />
           </div>
         ) : error ? (
           <p className="text-slate-400 text-sm">Analysis unavailable — check pipeline status.</p>

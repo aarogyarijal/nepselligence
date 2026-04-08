@@ -21,7 +21,7 @@ function TopLosers({ isOpen, range, onSymbolClick, onFloorsheetClick }: TopLoser
   const load = useCallback(async () => {
     try {
       const envelope = await fetchTopLosers(range)
-      setLosers(envelope.data ? envelope.data.slice(0, 10) : [])
+      setLosers(envelope.data ? envelope.data.slice(0, 20) : [])
     } catch {
       setLosers([])
     } finally {
@@ -30,7 +30,7 @@ function TopLosers({ isOpen, range, onSymbolClick, onFloorsheetClick }: TopLoser
   }, [range])
 
   useEffect(() => { setLoading(true); load() }, [load])
-  usePolling(load, 30_000, isOpen && range === '1D')
+  usePolling(load, 30_000, isOpen && range === 'today')
 
   return (
     <div>

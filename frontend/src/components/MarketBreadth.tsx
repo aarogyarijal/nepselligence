@@ -27,7 +27,7 @@ function MarketBreadthWidget({ isOpen, range }: MarketBreadthProps) {
   }, [range])
 
   useEffect(() => { setLoading(true); load() }, [load])
-  usePolling(load, 30_000, isOpen && range === '1D')
+  usePolling(load, 30_000, isOpen && range === 'today')
 
   if (loading) {
     return (

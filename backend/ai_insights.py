@@ -4,6 +4,9 @@ import json
 import logging
 import re
 from datetime import datetime, timezone, timedelta, date
+import zoneinfo
+
+NPT = zoneinfo.ZoneInfo("Asia/Kathmandu")
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text as sql_text
@@ -42,7 +45,7 @@ def _gather_market_context(db: Session) -> dict:
             "turnover": summary.total_turnover,
             "shares": summary.total_shares,
             "transactions": summary.total_transactions,
-            "as_of": summary.time.isoformat(),
+            "as_of": summary.time.astimezone(NPT).isoformat(),
         }
 
     # Top 5 gainers/losers from latest prices
@@ -546,7 +549,7 @@ def _get_stock_news(db: Session, symbol: str, hours: int = 72) -> list[dict]:
         .all()
     )
     return [
-        {"title": a.title, "category": a.category, "published_at": a.published_at.isoformat()}
+        {"title": a.title, "category": a.category, "published_at": a.published_at.astimezone(NPT).isoformat()}
         for a in articles
     ]
 

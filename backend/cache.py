@@ -5,7 +5,10 @@ All cached values include a `meta` dict with source and asOf timestamp.
 """
 
 import threading
+import zoneinfo
 from datetime import datetime, timezone
+
+NPT = zoneinfo.ZoneInfo("Asia/Kathmandu")
 from typing import Any
 
 try:
@@ -83,7 +86,7 @@ def make_envelope(data: Any, source: str = "cache") -> dict:
         "data": data,
         "meta": {
             "source": source,
-            "asOf": datetime.now(timezone.utc).isoformat(),
+            "asOf": datetime.now(NPT).isoformat(),
             "stale": source == "db",
         },
     }

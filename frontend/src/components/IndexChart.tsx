@@ -1,20 +1,16 @@
 'use client'
 
-import { useEffect, useState, useMemo, memo } from 'react'
-import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine,
-} from 'recharts'
+import { useEffect, useState, useRef, memo } from 'react'
 import { fetchIndexHistory } from '@/lib/api'
 import { usePolling } from '@/hooks/usePolling'
 import { formatPrice, formatChangePct, changeClass, changeArrow } from '@/lib/format'
+import LightweightAreaChart from '@/components/LightweightAreaChart'
 import type { TimeRange } from '@/app/page'
 import type { TimeInterval } from '@/types/market'
 
 interface ChartPoint {
   time: string
   value: number
-  rawTime: string
 }
 
 interface IndexChartProps {
@@ -23,63 +19,44 @@ interface IndexChartProps {
   interval?: TimeInterval
 }
 
-function formatTime(isoString: string, range: TimeRange): string {
-  const d = new Date(isoString)
-  if (range === '1D') {
-    return d.toLocaleTimeString('en-US', {
-      hour: '2-digit', minute: '2-digit', hour12: false,
-      timeZone: 'Asia/Kathmandu',
-    })
-  }
-  return d.toLocaleDateString('en-IN', {
-    month: 'short', day: 'numeric',
-    timeZone: 'Asia/Kathmandu',
-  })
-}
-
 function IndexChart({ isOpen, range, interval = '1min' }: IndexChartProps) {
   const [data, setData] = useState<ChartPoint[]>([])
   const [loading, setLoading] = useState(true)
+  const abortRef = useRef<AbortController | null>(null)
 
-  const refresh = async () => {
+  const refresh = async (signal?: AbortSignal) => {
     try {
-      const rows = await fetchIndexHistory(range, interval)
+      const rows = await fetchIndexHistory(range, interval, signal)
+      if (signal?.aborted) return
       if (rows && rows.length > 0) {
-        setData(rows.map(r => ({
-          time: formatTime(r.time, range),
-          value: r.value,
-          rawTime: r.time,
-        })))
+        setData(rows.map(r => ({ time: r.time, value: r.value })))
       } else {
         setData([])
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return
       setData([])
     }
   }
 
   useEffect(() => {
+    abortRef.current?.abort()
+    const ac = new AbortController()
+    abortRef.current = ac
     setLoading(true)
-    refresh().finally(() => setLoading(false))
+    refresh(ac.signal).finally(() => {
+      if (!ac.signal.aborted) setLoading(false)
+    })
+    return () => ac.abort()
   }, [range, interval])
-  usePolling(refresh, 30_000, isOpen && range === '1D')
+
+  usePolling(() => refresh(), 60_000, isOpen && range === 'today')
 
   const last = data[data.length - 1]
   const first = data[0]
   const change = data.length >= 2 ? last.value - first.value : 0
   const changePct = data.length >= 2 ? (change / first.value) * 100 : 0
   const isNegative = change < 0
-  const color = isNegative ? '#dc2626' : '#16a34a'
-
-  const chartData = useMemo(
-    () => data.length === 1 ? [{ ...data[0], time: '' }, data[0]] : data,
-    [data]
-  )
-
-  const values = data.map(d => d.value)
-  const minValue = values.length ? Math.min(...values) : 0
-  const maxValue = values.length ? Math.max(...values) : 0
-  const padding = (maxValue - minValue) * 0.1 || 1
 
   return (
     <div className="flex flex-col h-full" suppressHydrationWarning>
@@ -110,50 +87,7 @@ function IndexChart({ isOpen, range, interval = '1min' }: IndexChartProps) {
         </div>
       ) : (
         <div className="flex-1 min-h-0">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="nepseGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={color} stopOpacity={0.25} />
-                  <stop offset="95%" stopColor={color} stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 10, fill: '#64748b' }}
-                axisLine={false}
-                tickLine={false}
-                interval="preserveStartEnd"
-              />
-              <YAxis
-                domain={[minValue - padding, maxValue + padding]}
-                tick={{ fontSize: 10, fill: '#64748b' }}
-                axisLine={false}
-                tickLine={false}
-                tickFormatter={v => v.toFixed(0)}
-                width={52}
-              />
-              <Tooltip
-                contentStyle={{ background: '#0f172a', border: `1px solid ${color}40`, borderRadius: 6 }}
-                labelStyle={{ color: '#94a3b8', fontSize: 11 }}
-                formatter={(v: number) => [v.toFixed(2), 'NEPSE']}
-              />
-              {data.length === 1 && (
-                <ReferenceLine y={data[0].value} stroke={color} strokeDasharray="4 4" strokeOpacity={0.6} />
-              )}
-              <Area
-                type="monotone"
-                dataKey="value"
-                stroke={color}
-                strokeWidth={2}
-                fill="url(#nepseGrad)"
-                dot={data.length === 1 ? { fill: color, r: 4 } : false}
-                activeDot={{ r: 4, fill: color }}
-                isAnimationActive={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          <LightweightAreaChart data={data} isNegative={isNegative} />
         </div>
       )}
     </div>

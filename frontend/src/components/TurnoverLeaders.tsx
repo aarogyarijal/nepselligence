@@ -5,6 +5,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
 import { fetchTopTurnover } from '@/lib/api'
+import { CHART_COLORS, rechartsTooltipStyle } from '@/lib/chartTheme'
 import { usePolling } from '@/hooks/usePolling'
 import type { TurnoverLeader } from '@/types/market'
 import type { TimeRange } from '@/app/page'
@@ -32,7 +33,7 @@ function TurnoverLeaders({ isOpen, range, onSymbolClick, onFloorsheetClick }: Tu
   }, [range])
 
   useEffect(() => { setLoading(true); load() }, [load])
-  usePolling(load, 30_000, isOpen && range === '1D')
+  usePolling(load, 30_000, isOpen && range === 'today')
 
   if (loading) {
     return (
@@ -88,13 +89,11 @@ function TurnoverLeaders({ isOpen, range, onSymbolClick, onFloorsheetClick }: Tu
         />
         <Tooltip
           formatter={(v: number) => [`Rs ${v.toFixed(2)} Cr`, 'Turnover']}
-          contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6 }}
-          labelStyle={{ color: '#f1f5f9' }}
-          itemStyle={{ color: '#94a3b8' }}
+          {...rechartsTooltipStyle()}
         />
         <Bar dataKey="turnoverCr" radius={[0, 4, 4, 0]} isAnimationActive={false} cursor="pointer">
           {data.map((_, i) => (
-            <Cell key={i} fill="#3b82f6" fillOpacity={0.7 + (1 - i / data.length) * 0.3} />
+            <Cell key={i} fill={CHART_COLORS.neutral} fillOpacity={0.7 + (1 - i / data.length) * 0.3} />
           ))}
         </Bar>
       </BarChart>

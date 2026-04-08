@@ -21,7 +21,7 @@ function TopGainers({ isOpen, range, onSymbolClick, onFloorsheetClick }: TopGain
   const load = useCallback(async () => {
     try {
       const envelope = await fetchTopGainers(range)
-      setGainers(envelope.data ? envelope.data.slice(0, 10) : [])
+      setGainers(envelope.data ? envelope.data.slice(0, 20) : [])
     } catch {
       setGainers([])
     } finally {
@@ -30,7 +30,7 @@ function TopGainers({ isOpen, range, onSymbolClick, onFloorsheetClick }: TopGain
   }, [range])
 
   useEffect(() => { setLoading(true); load() }, [load])
-  usePolling(load, 30_000, isOpen && range === '1D')
+  usePolling(load, 30_000, isOpen && range === 'today')
 
   return (
     <div>

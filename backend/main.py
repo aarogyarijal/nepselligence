@@ -4,6 +4,9 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
+import zoneinfo
+
+NPT = zoneinfo.ZoneInfo("Asia/Kathmandu")
 from typing import Optional
 
 from fastapi import FastAPI, Query, Body, HTTPException
@@ -22,6 +25,11 @@ from .database import SessionLocal
 
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger(__name__)
+
+
+def _to_npt_iso(dt: datetime) -> str:
+    """Convert a datetime to NPT ISO string."""
+    return dt.astimezone(NPT).isoformat()
 
 # Global scheduler instance
 scheduler: IngestionScheduler = None
@@ -58,7 +66,7 @@ def _aggregate_timeseries(rows_iter, interval_minutes: int) -> list:
         change = round(val - first_val, 2)
         change_pct = round((change / first_val) * 100, 2) if first_val else 0.0
         result.append({
-            "time": datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat(),
+            "time": datetime.fromtimestamp(epoch, tz=NPT).isoformat(),
             "value": val,
             "change": change,
             "changePct": change_pct,
@@ -82,7 +90,7 @@ def _aggregate_ohlcv(rows_iter, interval_minutes: int) -> list:
         vals = [v for _, v, _ in ticks]
         vols = [vol for _, _, vol in ticks]
         result.append({
-            "time": datetime.fromtimestamp(bucket_epoch, tz=timezone.utc).isoformat(),
+            "time": datetime.fromtimestamp(bucket_epoch, tz=NPT).isoformat(),
             "open": vals[0],
             "high": max(vals),
             "low": min(vals),
@@ -244,7 +252,7 @@ async def get_index_history(
                     change = round(val - first_val, 2)
                     change_pct = round((change / first_val) * 100, 2) if first_val else 0.0
                     result.append({
-                        "time": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+                        "time": datetime.fromtimestamp(ts, tz=NPT).isoformat(),
                         "value": val,
                         "change": change,
                         "changePct": change_pct,
@@ -299,7 +307,7 @@ async def get_index_history(
 
         if not result:
             return [
-                {"time": r.time.isoformat(), "value": r.nepse_index, "change": r.nepse_change, "changePct": r.nepse_change_pct}
+                {"time": _to_npt_iso(r.time), "value": r.nepse_index, "change": r.nepse_change, "changePct": r.nepse_change_pct}
                 for r in rows if r.nepse_index > 0
             ]
 
@@ -342,7 +350,7 @@ async def get_latest_insight(type: str = None):
         return {
             "insight_text": insight.insight_text,
             "insight_type": insight.insight_type,
-            "generated_at": insight.generated_at.isoformat(),
+            "generated_at": _to_npt_iso(insight.generated_at),
             "extra_data": insight.extra_data,
         }
     finally:
@@ -365,7 +373,7 @@ async def get_insight_history(limit: int = 10):
             {
                 "insight_text": i.insight_text,
                 "insight_type": i.insight_type,
-                "generated_at": i.generated_at.isoformat(),
+                "generated_at": _to_npt_iso(i.generated_at),
                 "extra_data": i.extra_data,
             }
             for i in insights
@@ -473,7 +481,7 @@ async def post_stock_insight(symbol: str, body: dict = Body(default={})):
                 "insight_text": text,
                 "insight_type": STOCK_INSIGHT,
                 "symbol": sym,
-                "generated_at": row.generated_at.isoformat(),
+                "generated_at": _to_npt_iso(row.generated_at),
                 "extra_data": row.extra_data,
             }
         finally:
@@ -504,7 +512,7 @@ async def get_stock_insight_latest(symbol: str):
             "insight_text": row.insight_text,
             "insight_type": row.insight_type,
             "symbol": sym,
-            "generated_at": row.generated_at.isoformat(),
+            "generated_at": _to_npt_iso(row.generated_at),
             "extra_data": row.extra_data,
         }
     finally:
@@ -541,8 +549,8 @@ def _serialize_article(article: NewsArticle) -> dict:
         "link": article.link,
         "summary": article.summary,
         "source": article.source,
-        "published_at": article.published_at.isoformat(),
-        "fetched_at": article.fetched_at.isoformat(),
+        "published_at": _to_npt_iso(article.published_at),
+        "fetched_at": _to_npt_iso(article.fetched_at),
         "symbols": article.symbols or [],
         "category": article.category,
     }
@@ -786,7 +794,7 @@ async def get_market_floorsheet_summary(date: Optional[str] = None):
         except ValueError:
             return {"error": "Invalid date format. Use YYYY-MM-DD."}
     else:
-        target_date = datetime.now(timezone.utc).date()
+        target_date = datetime.now(NPT).date()
 
     db = SessionLocal()
     try:
@@ -902,7 +910,7 @@ async def get_stock_intraday(symbol: str):
         # Convert epoch seconds → ISO8601 if numeric
         try:
             ts_int = int(t)
-            iso_time = datetime.fromtimestamp(ts_int, tz=timezone.utc).isoformat()
+            iso_time = datetime.fromtimestamp(ts_int, tz=NPT).isoformat()
         except (ValueError, TypeError):
             iso_time = str(t)
         # Bucket by minute
@@ -966,7 +974,7 @@ async def get_sectors_intraday(
                 for sname, pts in raw.items():
                     if pts:
                         seen = {int(p[0]): float(p[1]) for p in pts if isinstance(p, (list, tuple))}
-                        live_iter = [(datetime.fromtimestamp(ts, tz=timezone.utc), val) for ts, val in sorted(seen.items())]
+                        live_iter = [(datetime.fromtimestamp(ts, tz=NPT), val) for ts, val in sorted(seen.items())]
                         result[sname] = _aggregate_timeseries(live_iter, int_min)
             return result
         finally:
@@ -991,7 +999,7 @@ async def get_sectors_intraday(
         if not sorted_pts:
             result[sector_name] = []
             continue
-        live_iter = [(datetime.fromtimestamp(ts, tz=timezone.utc), val) for ts, val in sorted_pts]
+        live_iter = [(datetime.fromtimestamp(ts, tz=NPT), val) for ts, val in sorted_pts]
         result[sector_name] = _aggregate_timeseries(live_iter, int_min)
     return result
 
@@ -1024,7 +1032,7 @@ async def get_stock_chart(
             )
             data = [
                 {
-                    "time": r.time.date().isoformat(),
+                    "time": r.time.astimezone(NPT).date().isoformat(),
                     "open": r.open,
                     "high": r.high,
                     "low": r.low,
@@ -1050,7 +1058,7 @@ async def get_stock_chart(
                 if rate is None or t is None:
                     continue
                 try:
-                    ts_dt = datetime.fromtimestamp(int(t), tz=timezone.utc)
+                    ts_dt = datetime.fromtimestamp(int(t), tz=NPT)
                 except (ValueError, TypeError):
                     continue
                 rows_iter.append((ts_dt, float(rate), int(vol)))
@@ -1113,9 +1121,7 @@ async def get_market_overview():
     # Determine isOpen by checking NEPSE trading hours (10:45 AM – 3:00 PM NPT, Sun–Thu).
     # NPT is UTC+5:45.
     from datetime import time as dtime
-    import zoneinfo
-    npt = zoneinfo.ZoneInfo("Asia/Kathmandu")
-    now_npt = datetime.now(npt)
+    now_npt = datetime.now(NPT)
     weekday = now_npt.weekday()  # Mon=0 … Sun=6; NEPSE trades Sun(6)–Thu(3)
     t = now_npt.time()
     market_open_time  = dtime(10, 45)
@@ -1137,7 +1143,7 @@ async def get_market_overview():
                     "totalShares": row.total_shares,
                     "totalTransactions": row.total_transactions,
                 },
-                "lastUpdated": row.time.isoformat(),
+                "lastUpdated": _to_npt_iso(row.time),
             }
             return make_envelope(data, "db")
         return make_envelope(None, "db")
@@ -1155,7 +1161,7 @@ def _latest_date(db, model, date_col):
 def _previous_date(db, date_col):
     """Return the most recent date strictly before today (the last completed trading day)."""
     from sqlalchemy import func
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(NPT).date()
     result = db.query(func.max(date_col)).filter(date_col < today).scalar()
     # If no data before today, fall back to absolute latest (handles weekends / holidays)
     if result is None:
@@ -1675,7 +1681,7 @@ async def get_stock_history(symbol: str):
         if rows:
             data = [
                 {
-                    "date": r.time.date().isoformat(),
+                    "date": r.time.astimezone(NPT).date().isoformat(),
                     "open": r.open,
                     "high": r.high,
                     "low": r.low,
@@ -1769,7 +1775,7 @@ async def get_stock_analysis(symbol: str):
         lows    = [r.low  if r.low   and r.low   > 0 else r.ltp for r in daily_rows]
         volumes = [r.volume   or 0 for r in daily_rows]
         turnovers = [r.turnover or 0 for r in daily_rows]
-        dates   = [r.time.date().isoformat() for r in daily_rows]
+        dates   = [r.time.astimezone(NPT).date().isoformat() for r in daily_rows]
 
         # Current price: prefer latest live row, else last backfill row
         latest_row = live_rows[-1] if live_rows else daily_rows[-1]
@@ -1962,7 +1968,7 @@ async def get_stock_analysis(symbol: str):
         # --- Full OHLCV history for chart ---
         history = [
             {
-                "date": r.time.date().isoformat(),
+                "date": r.time.astimezone(NPT).date().isoformat(),
                 "open": r.open,
                 "high": r.high,
                 "low": r.low,

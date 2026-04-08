@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { MarketStatusCtx } from '@/hooks/useMarketStatus'
 import MarketStatusBar from '@/components/MarketStatusBar'
@@ -27,13 +27,20 @@ const RANGE_LABELS: Record<TimeRange, string> = {
   today: 'Today', last_day: 'Last Day', '5D': '5D', '1M': '1M', '3M': '3M', '6M': '6M', '1Y': '1Y',
 }
 
+const DEBOUNCE_MS = 150
+
 export default function Dashboard() {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
+  // UI state (for button highlighting, updates instantly)
   const [range, setRange] = useState<TimeRange>('today')
   const [interval, setInterval] = useState<TimeInterval>('1min')
+  // Debounced state (passed to children, updates after DEBOUNCE_MS)
+  const [activeRange, setActiveRange] = useState<TimeRange>('today')
+  const [activeInterval, setActiveInterval] = useState<TimeInterval>('1min')
   const [floorsheetSymbol, setFloorsheetSymbol] = useState<string | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
 
   const loadMarketStatus = async () => {
     try {
@@ -47,6 +54,16 @@ export default function Dashboard() {
 
   useEffect(() => { loadMarketStatus() }, [])
   usePolling(loadMarketStatus, 60_000, true)
+
+  // Debounce: propagate range/interval to children after rapid clicking settles
+  useEffect(() => {
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      setActiveRange(range)
+      setActiveInterval(interval)
+    }, DEBOUNCE_MS)
+    return () => clearTimeout(debounceRef.current)
+  }, [range, interval])
 
   const handleRangeChange = useCallback((r: TimeRange) => {
     setRange(r)
@@ -105,13 +122,13 @@ export default function Dashboard() {
             <div className="col-span-8">
               <WidgetShell title="NEPSE Index" className="h-80">
                 <div className="h-56">
-                  <IndexChart isOpen={isOpen} range={range} interval={interval} />
+                  <IndexChart isOpen={isOpen} range={activeRange} interval={activeInterval} />
                 </div>
               </WidgetShell>
             </div>
             <div className="col-span-4">
               <WidgetShell title="Sector Performance" className="h-80">
-                <SectorPerformance isOpen={isOpen} range={range} interval={interval} />
+                <SectorPerformance isOpen={isOpen} range={activeRange} interval={activeInterval} />
               </WidgetShell>
             </div>
           </div>
@@ -120,17 +137,17 @@ export default function Dashboard() {
           <div className="grid grid-cols-12 gap-6 mb-6">
             <div className="col-span-3">
               <WidgetShell title="Top Gainers" className="h-[32rem]" scrollable>
-                <TopGainers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
+                <TopGainers isOpen={isOpen} range={activeRange} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
             <div className="col-span-3">
               <WidgetShell title="Top Losers" className="h-[32rem]" scrollable>
-                <TopLosers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
+                <TopLosers isOpen={isOpen} range={activeRange} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
             <div className="col-span-6">
               <WidgetShell title="Turnover Leaders" className="h-[32rem]">
-                <TurnoverLeaders isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
+                <TurnoverLeaders isOpen={isOpen} range={activeRange} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
           </div>
@@ -139,7 +156,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-12 gap-6 mb-6">
             <div className="col-span-3">
               <WidgetShell title="Market Breadth" className="h-96">
-                <MarketBreadthWidget isOpen={isOpen} range={range} />
+                <MarketBreadthWidget isOpen={isOpen} range={activeRange} />
               </WidgetShell>
             </div>
             <div className="col-span-3">
