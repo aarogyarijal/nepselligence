@@ -15,19 +15,23 @@ import AdminControls from '@/components/AdminControls'
 import NewsFeed from '@/components/NewsFeed'
 import WidgetShell from '@/components/WidgetShell'
 import FloorsheetModal from '@/components/FloorsheetModal'
+import TradeActivity from '@/components/TradeActivity'
 import { fetchMarketOverview } from '@/lib/api'
 import { usePolling } from '@/hooks/usePolling'
 import type { TimeInterval } from '@/types/market'
 import { VALID_INTERVALS, DEFAULT_INTERVAL } from '@/types/market'
 
-export type TimeRange = '1D' | '5D' | '1M' | '3M' | '6M' | '1Y' | '5Y'
-const RANGES: TimeRange[] = ['1D', '5D', '1M', '3M', '6M', '1Y', '5Y']
+export type TimeRange = 'today' | 'last_day' | '5D' | '1M' | '3M' | '6M' | '1Y'
+const RANGES: TimeRange[] = ['today', 'last_day', '5D', '1M', '3M', '6M', '1Y']
+const RANGE_LABELS: Record<TimeRange, string> = {
+  today: 'Today', last_day: 'Last Day', '5D': '5D', '1M': '1M', '3M': '3M', '6M': '6M', '1Y': '1Y',
+}
 
 export default function Dashboard() {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
-  const [range, setRange] = useState<TimeRange>('1D')
+  const [range, setRange] = useState<TimeRange>('today')
   const [interval, setInterval] = useState<TimeInterval>('1min')
   const [floorsheetSymbol, setFloorsheetSymbol] = useState<string | null>(null)
 
@@ -74,7 +78,7 @@ export default function Dashboard() {
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                 }`}
               >
-                {r}
+                {RANGE_LABELS[r]}
               </button>
             ))}
             <div className="w-px h-4 bg-slate-700 mx-2" />
@@ -115,30 +119,33 @@ export default function Dashboard() {
           {/* ROW 2: Top Gainers + Top Losers + Turnover Leaders */}
           <div className="grid grid-cols-12 gap-6 mb-6">
             <div className="col-span-3">
-              <WidgetShell title="Top Gainers" className="h-[26rem] overflow-y-auto">
+              <WidgetShell title="Top Gainers" className="h-[32rem]" scrollable>
                 <TopGainers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
             <div className="col-span-3">
-              <WidgetShell title="Top Losers" className="h-[26rem] overflow-y-auto">
+              <WidgetShell title="Top Losers" className="h-[32rem]" scrollable>
                 <TopLosers isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
             <div className="col-span-6">
-              <WidgetShell title="Turnover Leaders" className="h-[26rem]">
+              <WidgetShell title="Turnover Leaders" className="h-[32rem]">
                 <TurnoverLeaders isOpen={isOpen} range={range} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
           </div>
 
-          {/* ROW 3: Market Breadth + AI Insights */}
+          {/* ROW 3: Market Breadth + Trade Activity + AI Insights */}
           <div className="grid grid-cols-12 gap-6 mb-6">
-            <div className="col-span-4">
+            <div className="col-span-3">
               <WidgetShell title="Market Breadth" className="h-96">
                 <MarketBreadthWidget isOpen={isOpen} range={range} />
               </WidgetShell>
             </div>
-            <div className="col-span-8">
+            <div className="col-span-3">
+              <TradeActivity />
+            </div>
+            <div className="col-span-6">
               <div className="h-96">
                 <AIPanel isOpen={isOpen} />
               </div>

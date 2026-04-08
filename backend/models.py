@@ -1,7 +1,7 @@
 """Database models for NEPSE market data."""
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, Float, String, Text, DateTime, Date, UniqueConstraint, Index
+from sqlalchemy import Column, Integer, BigInteger, Float, String, Text, DateTime, Date, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
 
 from .database import Base
@@ -35,22 +35,31 @@ class StockPrice(Base):
 
 
 class Floorsheet(Base):
-    """Transaction-level floorsheet data (all trades)."""
+    """Transaction-level floorsheet data (all trades).
+
+    Broker identity fields (buyerMemberId, sellerBrokerName, etc.) from the NepseAPI
+    are always null and are not stored. Analytics are purely trade-level.
+    """
 
     __tablename__ = "floorsheet"
 
     id = Column(Integer, primary_key=True)
+    contract_id = Column(BigInteger, nullable=False)   # contractId — dedup key
     symbol = Column(String(20), nullable=False, index=True)
-    buyer = Column(String(100))
-    seller = Column(String(100))
+    stock_id = Column(Integer)                          # stockId from API
     quantity = Column(Integer, nullable=False)
     rate = Column(Float, nullable=False)
-    contract_no = Column(Integer)
+    amount = Column(Float, nullable=False)              # contractAmount (rate * quantity)
     time = Column(DateTime(timezone=True), nullable=False, index=True)
+    business_date = Column(Date, nullable=False)
+    security_name = Column(String(200))
 
     __table_args__ = (
+        UniqueConstraint("contract_id", name="uq_floorsheet_contract_id"),
         Index("idx_floorsheet_symbol_time", "symbol", "time"),
-        Index("idx_floorsheet_time", "time"),
+        Index("idx_floorsheet_symbol_date", "symbol", "business_date"),
+        Index("idx_floorsheet_date", "business_date"),
+        Index("idx_floorsheet_amount", "amount"),
     )
 
 

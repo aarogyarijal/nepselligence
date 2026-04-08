@@ -10,7 +10,8 @@ import type {
   OHLCVPoint,
   Company,
   AIInsight,
-  FloorsheetRow,
+  FloorsheetResponse,
+  MarketFloorsheetSummary,
   StockAnalysis,
   IntradayPoint,
   SectorIntradayData,
@@ -44,23 +45,23 @@ export async function fetchMarketOverview(): Promise<ApiEnvelope<MarketOverview 
   return get('/api/market/overview')
 }
 
-export async function fetchSectors(range = '1D'): Promise<ApiEnvelope<SectorData[]>> {
+export async function fetchSectors(range = 'today'): Promise<ApiEnvelope<SectorData[]>> {
   return get(`/api/market/sectors?range=${range}`)
 }
 
-export async function fetchTopGainers(range = '1D'): Promise<ApiEnvelope<TopMover[]>> {
+export async function fetchTopGainers(range = 'today'): Promise<ApiEnvelope<TopMover[]>> {
   return get(`/api/market/top-gainers?range=${range}`)
 }
 
-export async function fetchTopLosers(range = '1D'): Promise<ApiEnvelope<TopMover[]>> {
+export async function fetchTopLosers(range = 'today'): Promise<ApiEnvelope<TopMover[]>> {
   return get(`/api/market/top-losers?range=${range}`)
 }
 
-export async function fetchTopTurnover(range = '1D'): Promise<ApiEnvelope<TurnoverLeader[]>> {
+export async function fetchTopTurnover(range = 'today'): Promise<ApiEnvelope<TurnoverLeader[]>> {
   return get(`/api/market/top-turnover?range=${range}`)
 }
 
-export async function fetchMarketBreadth(range = '1D'): Promise<ApiEnvelope<MarketBreadth | null>> {
+export async function fetchMarketBreadth(range = 'today'): Promise<ApiEnvelope<MarketBreadth | null>> {
   return get(`/api/market/breadth?range=${range}`)
 }
 
@@ -107,15 +108,22 @@ export async function fetchInsightHistory(limit = 10): Promise<AIInsight[]> {
   return res.json()
 }
 
-export async function fetchFloorsheet(symbol: string, limit = 200): Promise<FloorsheetRow[]> {
+export async function fetchFloorsheet(symbol: string, limit = 200, days = 1): Promise<FloorsheetResponse> {
   const res = await fetch(
-    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/floorsheet?limit=${limit}`,
+    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/floorsheet?limit=${limit}&days=${days}`,
     { mode: 'cors' }
   )
-  if (!res.ok) return []
-  const data = await res.json()
-  // endpoint returns ApiEnvelope or raw array
-  return Array.isArray(data) ? data : (data.data ?? [])
+  if (!res.ok) return { symbol, trades: [], analytics: null }
+  return res.json()
+}
+
+export async function fetchMarketFloorsheetSummary(date?: string): Promise<MarketFloorsheetSummary | null> {
+  const url = date
+    ? `${API_URL}/api/market/floorsheet-summary?date=${date}`
+    : `${API_URL}/api/market/floorsheet-summary`
+  const res = await fetch(url, { mode: 'cors' })
+  if (!res.ok) return null
+  return res.json()
 }
 
 export async function fetchStockIntraday(symbol: string): Promise<IntradayPoint[]> {
@@ -127,7 +135,7 @@ export async function fetchStockIntraday(symbol: string): Promise<IntradayPoint[
   return res.json()
 }
 
-export async function fetchSectorsIntraday(range = '1D', interval = ''): Promise<SectorIntradayData> {
+export async function fetchSectorsIntraday(range = 'today', interval = ''): Promise<SectorIntradayData> {
   const params = new URLSearchParams({ range })
   if (interval) params.set('interval', interval)
   const res = await fetch(`${API_URL}/api/sectors/intraday?${params}`, { mode: 'cors' })

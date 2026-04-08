@@ -4,6 +4,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from fastapi import FastAPI, Query, Body, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,8 +32,8 @@ INTERVAL_MINUTES = {
     "1H": 60, "4H": 240, "1D": 1440,
 }
 DEFAULT_INTERVAL = {
-    "1D": "1min", "5D": "15min", "1M": "1H",
-    "3M": "1D", "6M": "1D", "1Y": "1D", "5Y": "1D",
+    "today": "1min", "last_day": "1min", "5D": "15min", "1M": "1H",
+    "3M": "1D", "6M": "1D", "1Y": "1D",
 }
 
 
@@ -99,6 +100,20 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Creating database tables...")
     Base.metadata.create_all(bind=engine)
+
+    # Migrate floorsheet table if it uses the old schema (buyer/seller columns, no contract_id)
+    with engine.connect() as conn:
+        from sqlalchemy import text as sql_text
+        has_contract_id = conn.execute(sql_text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='floorsheet' AND column_name='contract_id'
+        """)).fetchone()
+        if not has_contract_id:
+            logger.info("Migrating floorsheet table to new schema (dropping old buyer/seller columns)...")
+            conn.execute(sql_text("DROP TABLE IF EXISTS floorsheet CASCADE"))
+            conn.commit()
+            Base.metadata.create_all(bind=engine)
+            logger.info("Floorsheet table recreated with new schema")
 
     logger.info("Initializing data providers...")
     primary_provider = NepseAPIProvider(
@@ -185,7 +200,7 @@ async def get_latest_prices():
 
 @app.get("/api/index/history")
 async def get_index_history(
-    range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$"),
+    range: str = Query(default="today", regex="^(today|last_day|5D|1M|3M|6M|1Y)$"),
     interval: str = Query(default=""),
 ):
     """Get NEPSE index time-series for the given range and interval.
@@ -196,24 +211,24 @@ async def get_index_history(
     from sqlalchemy import func, cast, Date as SADate, text
 
     range_map = {
-        "1D": timedelta(days=1),
-        "5D": timedelta(days=10),   # 10 calendar days covers 5 trading days across weekends/holidays
-        "1M": timedelta(days=30),
-        "3M": timedelta(days=90),
-        "6M": timedelta(days=180),
-        "1Y": timedelta(days=365),
-        "5Y": timedelta(days=1825),
+        "today":    timedelta(days=1),
+        "last_day": timedelta(days=2),  # look back 2 days to capture previous trading day
+        "5D":  timedelta(days=10),   # 10 calendar days covers 5 trading days across weekends/holidays
+        "1M":  timedelta(days=30),
+        "3M":  timedelta(days=90),
+        "6M":  timedelta(days=180),
+        "1Y":  timedelta(days=365),
     }
-    # For 1D: use real intraday snapshots (just need 2+ points).
+    # For today/last_day: use real intraday snapshots (just need 2+ points).
     # For 5D+: require enough distinct calendar days of real data; otherwise the backfill
     # proxy (one point/day) gives a better picture than a handful of intraday snaps.
-    min_real_days = {"1D": 0, "5D": 4, "1M": 14, "3M": 45, "6M": 90, "1Y": 180, "5Y": 365}
+    min_real_days = {"today": 0, "last_day": 0, "5D": 4, "1M": 14, "3M": 45, "6M": 90, "1Y": 180}
 
     cutoff = datetime.now(timezone.utc) - range_map[range]
     db = SessionLocal()
     try:
-        # For 1D: use DailyNepseIndexGraph — minute-by-minute intraday data from NepseAPI
-        if range == "1D" and scheduler is not None:
+        # For today: use DailyNepseIndexGraph — minute-by-minute intraday data from NepseAPI
+        if range == "today" and scheduler is not None:
             raw = await scheduler.provider_manager.get_daily_index_graph()
             if raw:
                 # Deduplicate by timestamp, keep last value per second
@@ -415,7 +430,7 @@ async def admin_run_generate_insight(type: str = "daily_close", body: dict = Bod
         from .ai_insights import generate_insight, MARKET_OPEN, HOURLY, WEEKLY_WRAP, DAILY_CLOSE
         db = SessionLocal()
         try:
-            await generate_insight(db, scheduler.provider_manager, type, options)
+            await generate_insight(db, scheduler.provider_manager, type, options, force=True)
         finally:
             db.close()
         return {"ok": True, "action": "generate_ai_insight", "type": type}
@@ -591,28 +606,276 @@ async def admin_run_ingest_news():
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/api/admin/run/ingest-floorsheet")
+async def admin_run_ingest_floorsheet():
+    """Manually trigger floorsheet ingestion (ignores market-closed guard)."""
+    if scheduler is None:
+        return {"ok": False, "error": "Scheduler not running"}
+    try:
+        raw = await scheduler.provider_manager.get_floorsheet_full()
+        if not raw:
+            return {"ok": True, "action": "ingest_floorsheet", "inserted": 0, "note": "No data returned"}
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from .models import Floorsheet
+        rows = []
+        for item in raw:
+            contract_id = item.get("contractId")
+            symbol = item.get("stockSymbol", "").strip()
+            if not contract_id or not symbol:
+                continue
+            rows.append({
+                "contract_id": int(contract_id),
+                "symbol": symbol,
+                "stock_id": item.get("stockId"),
+                "quantity": int(item.get("contractQuantity") or 0),
+                "rate": float(item.get("contractRate") or 0),
+                "amount": float(item.get("contractAmount") or 0),
+                "time": item.get("tradeTime"),
+                "business_date": item.get("businessDate"),
+                "security_name": item.get("securityName"),
+            })
+        db = SessionLocal()
+        try:
+            stmt = pg_insert(Floorsheet).values(rows)
+            stmt = stmt.on_conflict_do_nothing(constraint="uq_floorsheet_contract_id")
+            result = db.execute(stmt)
+            db.commit()
+            return {"ok": True, "action": "ingest_floorsheet", "processed": len(rows)}
+        finally:
+            db.close()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/stocks/{symbol}/floorsheet")
-async def get_symbol_floorsheet(symbol: str, limit: int = 200, days: int = 30):
-    """Get recent floorsheet for symbol. Defaults to last 30 days, max 500 rows."""
+async def get_symbol_floorsheet(symbol: str, limit: int = 200, days: int = 1):
+    """Get recent floorsheet trades + analytics for symbol.
+
+    Returns both raw trades (up to limit, ordered newest first) and computed
+    trade-level analytics (VWAP, trade size distribution, block trades, intraday pattern).
+    Defaults to today's trades (days=1).
+    """
+    from sqlalchemy import text
+    symbol = symbol.upper()
     limit = min(limit, 500)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).date()
     db = SessionLocal()
     try:
-        floorsheet = db.query(Floorsheet).filter(
-            Floorsheet.symbol == symbol,
-            Floorsheet.time >= cutoff,
-        ).order_by(Floorsheet.time.desc()).limit(limit).all()
-        return [
-            {
-                "symbol": f.symbol,
-                "buyer": f.buyer,
-                "seller": f.seller,
-                "quantity": f.quantity,
-                "rate": f.rate,
-                "time": f.time,
+        trades = db.execute(text("""
+            SELECT contract_id, symbol, quantity, rate, amount, time, security_name
+            FROM floorsheet
+            WHERE symbol = :sym AND business_date >= :cutoff
+            ORDER BY time DESC
+            LIMIT :lim
+        """), {"sym": symbol, "cutoff": cutoff_date, "lim": limit}).fetchall()
+
+        # Analytics over the same window
+        stats = db.execute(text("""
+            SELECT
+                SUM(amount) / NULLIF(SUM(quantity), 0)               AS vwap,
+                AVG(quantity)                                         AS avg_trade_size,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY quantity) AS median_trade_size,
+                COUNT(*)                                              AS total_trades,
+                SUM(amount)                                           AS total_turnover,
+                MAX(quantity)                                         AS max_trade_size,
+                MAX(rate)                                             AS high,
+                MIN(rate)                                             AS low
+            FROM floorsheet
+            WHERE symbol = :sym AND business_date >= :cutoff
+        """), {"sym": symbol, "cutoff": cutoff_date}).fetchone()
+
+        size_dist = db.execute(text("""
+            SELECT
+                CASE
+                    WHEN quantity <= 100   THEN 'micro'
+                    WHEN quantity <= 500   THEN 'small'
+                    WHEN quantity <= 2000  THEN 'medium'
+                    WHEN quantity <= 10000 THEN 'large'
+                    ELSE 'block'
+                END AS bucket,
+                COUNT(*)    AS trades,
+                SUM(amount) AS turnover
+            FROM floorsheet
+            WHERE symbol = :sym AND business_date >= :cutoff
+            GROUP BY bucket
+            ORDER BY MIN(quantity)
+        """), {"sym": symbol, "cutoff": cutoff_date}).fetchall()
+
+        intraday = db.execute(text("""
+            SELECT
+                EXTRACT(HOUR FROM time AT TIME ZONE 'Asia/Kathmandu') AS hour,
+                COUNT(*)    AS trades,
+                SUM(amount) AS turnover,
+                SUM(amount) / NULLIF(SUM(quantity), 0) AS vwap
+            FROM floorsheet
+            WHERE symbol = :sym AND business_date >= :cutoff
+            GROUP BY hour
+            ORDER BY hour
+        """), {"sym": symbol, "cutoff": cutoff_date}).fetchall()
+
+        analytics = None
+        if stats and stats.total_trades and stats.total_trades > 0:
+            median_qty = stats.median_trade_size or 0
+            block_stats = db.execute(text("""
+                SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS turnover
+                FROM floorsheet
+                WHERE symbol = :sym AND business_date >= :cutoff
+                  AND quantity > GREATEST(:median * 3, 5000)
+            """), {"sym": symbol, "cutoff": cutoff_date, "median": median_qty}).fetchone()
+
+            analytics = {
+                "vwap": round(stats.vwap, 2) if stats.vwap else None,
+                "avgTradeSize": round(stats.avg_trade_size, 0) if stats.avg_trade_size else None,
+                "medianTradeSize": round(stats.median_trade_size, 0) if stats.median_trade_size else None,
+                "totalTrades": int(stats.total_trades),
+                "totalTurnover": round(stats.total_turnover, 2) if stats.total_turnover else None,
+                "maxTradeSize": int(stats.max_trade_size) if stats.max_trade_size else None,
+                "priceRange": {
+                    "high": stats.high,
+                    "low": stats.low,
+                },
+                "blockTrades": {
+                    "count": int(block_stats.cnt),
+                    "turnover": round(block_stats.turnover, 2),
+                } if block_stats else None,
+                "sizeDistribution": [
+                    {"bucket": r.bucket, "trades": int(r.trades), "turnover": round(r.turnover, 2)}
+                    for r in size_dist
+                ],
+                "intradayPattern": [
+                    {
+                        "hour": int(r.hour),
+                        "trades": int(r.trades),
+                        "turnover": round(r.turnover, 2),
+                        "vwap": round(r.vwap, 2) if r.vwap else None,
+                    }
+                    for r in intraday
+                ],
             }
-            for f in floorsheet
-        ]
+
+        return {
+            "symbol": symbol,
+            "trades": [
+                {
+                    "contractId": t.contract_id,
+                    "time": t.time,
+                    "quantity": t.quantity,
+                    "rate": t.rate,
+                    "amount": t.amount,
+                }
+                for t in trades
+            ],
+            "analytics": analytics,
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/market/floorsheet-summary")
+async def get_market_floorsheet_summary(date: Optional[str] = None):
+    """Market-wide floorsheet summary for a given date (default: today).
+
+    Returns total trades/turnover, top symbols by turnover and by trade count,
+    block trade leaders, and market-wide trade size profile.
+    """
+    from sqlalchemy import text
+    from datetime import date as date_type
+    if date:
+        try:
+            target_date = date_type.fromisoformat(date)
+        except ValueError:
+            return {"error": "Invalid date format. Use YYYY-MM-DD."}
+    else:
+        target_date = datetime.now(timezone.utc).date()
+
+    db = SessionLocal()
+    try:
+        totals = db.execute(text("""
+            SELECT COUNT(*) AS total_trades, SUM(amount) AS total_turnover, AVG(quantity) AS avg_trade_size
+            FROM floorsheet WHERE business_date = :d
+        """), {"d": target_date}).fetchone()
+
+        if not totals or not totals.total_trades:
+            return {"date": target_date.isoformat(), "totalTrades": 0, "totalTurnover": 0, "topByTurnover": [], "topByTrades": [], "blockLeaders": [], "tradeSizeProfile": []}
+
+        top_turnover = db.execute(text("""
+            SELECT symbol, SUM(amount) AS turnover, COUNT(*) AS trades,
+                   SUM(amount) / NULLIF(SUM(quantity), 0) AS vwap
+            FROM floorsheet WHERE business_date = :d
+            GROUP BY symbol ORDER BY turnover DESC LIMIT 10
+        """), {"d": target_date}).fetchall()
+
+        top_trades = db.execute(text("""
+            SELECT symbol, COUNT(*) AS trades, SUM(amount) AS turnover
+            FROM floorsheet WHERE business_date = :d
+            GROUP BY symbol ORDER BY trades DESC LIMIT 10
+        """), {"d": target_date}).fetchall()
+
+        block_leaders = db.execute(text("""
+            SELECT symbol,
+                   COUNT(*) FILTER (WHERE quantity > 5000) AS block_count,
+                   SUM(amount) FILTER (WHERE quantity > 5000) AS block_turnover,
+                   SUM(amount) AS total_turnover
+            FROM floorsheet WHERE business_date = :d
+            GROUP BY symbol
+            HAVING COUNT(*) FILTER (WHERE quantity > 5000) > 0
+            ORDER BY block_count DESC LIMIT 10
+        """), {"d": target_date}).fetchall()
+
+        size_profile = db.execute(text("""
+            SELECT
+                CASE
+                    WHEN quantity <= 100   THEN 'micro'
+                    WHEN quantity <= 500   THEN 'small'
+                    WHEN quantity <= 2000  THEN 'medium'
+                    WHEN quantity <= 10000 THEN 'large'
+                    ELSE 'block'
+                END AS bucket,
+                COUNT(*)    AS trades,
+                SUM(amount) AS turnover
+            FROM floorsheet WHERE business_date = :d
+            GROUP BY bucket ORDER BY MIN(quantity)
+        """), {"d": target_date}).fetchall()
+
+        total_turnover = totals.total_turnover or 0
+        return {
+            "date": target_date.isoformat(),
+            "totalTrades": int(totals.total_trades),
+            "totalTurnover": round(total_turnover, 2),
+            "avgTradeSize": round(totals.avg_trade_size, 0) if totals.avg_trade_size else None,
+            "topByTurnover": [
+                {
+                    "symbol": r.symbol,
+                    "turnover": round(r.turnover, 2),
+                    "trades": int(r.trades),
+                    "vwap": round(r.vwap, 2) if r.vwap else None,
+                }
+                for r in top_turnover
+            ],
+            "topByTrades": [
+                {"symbol": r.symbol, "trades": int(r.trades), "turnover": round(r.turnover, 2)}
+                for r in top_trades
+            ],
+            "blockLeaders": [
+                {
+                    "symbol": r.symbol,
+                    "blockCount": int(r.block_count),
+                    "blockTurnover": round(r.block_turnover or 0, 2),
+                    "blockPct": round((r.block_turnover or 0) / max(r.total_turnover, 1) * 100, 1),
+                }
+                for r in block_leaders
+            ],
+            "tradeSizeProfile": [
+                {
+                    "bucket": r.bucket,
+                    "trades": int(r.trades),
+                    "turnover": round(r.turnover, 2),
+                    "tradePct": round(int(r.trades) / max(totals.total_trades, 1) * 100, 1),
+                    "turnoverPct": round(r.turnover / max(total_turnover, 1) * 100, 1),
+                }
+                for r in size_profile
+            ],
+        }
     finally:
         db.close()
 
@@ -667,18 +930,18 @@ async def get_stock_intraday(symbol: str):
 
 @app.get("/api/sectors/intraday")
 async def get_sectors_intraday(
-    range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$"),
+    range: str = Query(default="today", regex="^(today|last_day|5D|1M|3M|6M|1Y)$"),
     interval: str = Query(default=""),
 ):
     """Get intraday graphs for all 13 NEPSE sector subindices.
 
-    range=1D: live NepseAPI sector graphs (1-min native).
-    range>1D: persisted intraday_sector_values table (5-min snapshots).
+    range=today: live NepseAPI sector graphs (1-min native).
+    range=last_day/multi-day: persisted intraday_sector_values table (5-min snapshots).
     """
     eff_interval = interval or DEFAULT_INTERVAL[range]
     int_min = INTERVAL_MINUTES.get(eff_interval, 1)
 
-    if range != "1D":
+    if range != "today":
         # Query persisted intraday sector values
         db = SessionLocal()
         cutoff = _range_cutoff(range)
@@ -698,7 +961,7 @@ async def get_sectors_intraday(
                 result[sector_name] = _aggregate_timeseries(pts, int_min)
 
             # If no data yet (ingestion hasn't started), fall back to live
-            if not result and scheduler is not None:
+            if not result and scheduler is not None and range == "last_day":
                 raw = await scheduler.provider_manager.get_sector_intraday_graphs()
                 for sname, pts in raw.items():
                     if pts:
@@ -709,7 +972,7 @@ async def get_sectors_intraday(
         finally:
             db.close()
 
-    # range=1D: use live sector graph endpoints
+    # range=today: use live sector graph endpoints
     if scheduler is None:
         return {}
     raw = await scheduler.provider_manager.get_sector_intraday_graphs()
@@ -736,7 +999,7 @@ async def get_sectors_intraday(
 @app.get("/api/stocks/{symbol}/chart")
 async def get_stock_chart(
     symbol: str,
-    range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$"),
+    range: str = Query(default="today", regex="^(today|last_day|5D|1M|3M|6M|1Y)$"),
     interval: str = Query(default=""),
 ):
     """Unified stock chart data. Returns line data for sub-daily intervals, OHLCV for 1D interval."""
@@ -775,8 +1038,8 @@ async def get_stock_chart(
         finally:
             db.close()
 
-    # --- range=1D, sub-daily: use DailyScripPriceGraph (1-min native) ---
-    if range == "1D" and scheduler is not None:
+    # --- range=today, sub-daily: use DailyScripPriceGraph (1-min native) ---
+    if range == "today" and scheduler is not None:
         raw = await scheduler.provider_manager.get_daily_scrip_price_graph(symbol)
         if raw:
             rows_iter = []
@@ -889,14 +1152,25 @@ def _latest_date(db, model, date_col):
     return result
 
 
+def _previous_date(db, date_col):
+    """Return the most recent date strictly before today (the last completed trading day)."""
+    from sqlalchemy import func
+    today = datetime.now(timezone.utc).date()
+    result = db.query(func.max(date_col)).filter(date_col < today).scalar()
+    # If no data before today, fall back to absolute latest (handles weekends / holidays)
+    if result is None:
+        result = db.query(func.max(date_col)).scalar()
+    return result
+
+
 _RANGE_DAYS = {
-    "1D": 10,    # 10 calendar days covers 1 trading week + weekends
+    "today": 1,      # current trading day only
+    "last_day": 10,  # look back 10 calendar days to find previous trading day
     "5D": 10,
     "1M": 30,
     "3M": 90,
     "6M": 180,
     "1Y": 365,
-    "5Y": 1825,
 }
 
 # Hardcoded NEPSE symbol → sector mapping (used as fallback when DailySectorIndex is empty)
@@ -1076,13 +1350,13 @@ def _compute_sectors_from_backfill(db, cutoff: datetime):
 
 
 @app.get("/api/market/sectors")
-async def get_market_sectors(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$")):
+async def get_market_sectors(range: str = Query(default="today", regex="^(today|last_day|5D|1M|3M|6M|1Y)$")):
     """Sector sub-indices. Cache → DB fallback (most recent trading day)."""
     from .cache import get_cache, make_envelope
     from sqlalchemy import func
 
     cache = get_cache()
-    if range == "1D":
+    if range == "today":
         cached = cache.get("sectors")
         if cached:
             return cached
@@ -1092,9 +1366,18 @@ async def get_market_sectors(range: str = Query(default="1D", regex="^(1D|5D|1M|
         cutoff = _range_cutoff(range)
         latest = _latest_date(db, DailySectorIndex, DailySectorIndex.date)
         if latest:
-            if range == "1D":
+            if range == "today":
                 rows = db.query(DailySectorIndex).filter(
                     DailySectorIndex.date == latest
+                ).order_by(DailySectorIndex.change_pct.desc()).all()
+                data = [
+                    {"name": r.sector_name, "value": r.index_value, "change": r.change, "changePct": r.change_pct}
+                    for r in rows
+                ]
+            elif range == "last_day":
+                prev = _previous_date(db, DailySectorIndex.date)
+                rows = db.query(DailySectorIndex).filter(
+                    DailySectorIndex.date == prev
                 ).order_by(DailySectorIndex.change_pct.desc()).all()
                 data = [
                     {"name": r.sector_name, "value": r.index_value, "change": r.change, "changePct": r.change_pct}
@@ -1134,12 +1417,12 @@ async def get_market_sectors(range: str = Query(default="1D", regex="^(1D|5D|1M|
 
 
 @app.get("/api/market/top-gainers")
-async def get_top_gainers(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$")):
+async def get_top_gainers(range: str = Query(default="today", regex="^(today|last_day|5D|1M|3M|6M|1Y)$")):
     """Top gaining stocks. Cache → DB → backfill fallback."""
     from .cache import get_cache, make_envelope
 
     cache = get_cache()
-    if range == "1D":
+    if range == "today":
         cached = cache.get("top_gainers")
         if cached:
             return cached
@@ -1149,9 +1432,19 @@ async def get_top_gainers(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|
         cutoff = _range_cutoff(range)
         latest = _latest_date(db, DailyTopMover, DailyTopMover.date)
         if latest:
-            if range == "1D":
+            if range == "today":
                 rows = db.query(DailyTopMover).filter(
                     DailyTopMover.date == latest,
+                    DailyTopMover.category == "gainer",
+                ).order_by(DailyTopMover.rank).all()
+                data = [
+                    {"rank": r.rank, "symbol": r.symbol, "ltp": r.ltp, "change": r.change, "changePct": r.change_pct}
+                    for r in rows
+                ]
+            elif range == "last_day":
+                prev = _previous_date(db, DailyTopMover.date)
+                rows = db.query(DailyTopMover).filter(
+                    DailyTopMover.date == prev,
                     DailyTopMover.category == "gainer",
                 ).order_by(DailyTopMover.rank).all()
                 data = [
@@ -1169,12 +1462,12 @@ async def get_top_gainers(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|
 
 
 @app.get("/api/market/top-losers")
-async def get_top_losers(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$")):
+async def get_top_losers(range: str = Query(default="today", regex="^(today|last_day|5D|1M|3M|6M|1Y)$")):
     """Top losing stocks. Cache → DB → backfill fallback."""
     from .cache import get_cache, make_envelope
 
     cache = get_cache()
-    if range == "1D":
+    if range == "today":
         cached = cache.get("top_losers")
         if cached:
             return cached
@@ -1184,9 +1477,19 @@ async def get_top_losers(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6
         cutoff = _range_cutoff(range)
         latest = _latest_date(db, DailyTopMover, DailyTopMover.date)
         if latest:
-            if range == "1D":
+            if range == "today":
                 rows = db.query(DailyTopMover).filter(
                     DailyTopMover.date == latest,
+                    DailyTopMover.category == "loser",
+                ).order_by(DailyTopMover.rank).all()
+                data = [
+                    {"rank": r.rank, "symbol": r.symbol, "ltp": r.ltp, "change": r.change, "changePct": r.change_pct}
+                    for r in rows
+                ]
+            elif range == "last_day":
+                prev = _previous_date(db, DailyTopMover.date)
+                rows = db.query(DailyTopMover).filter(
+                    DailyTopMover.date == prev,
                     DailyTopMover.category == "loser",
                 ).order_by(DailyTopMover.rank).all()
                 data = [
@@ -1204,13 +1507,13 @@ async def get_top_losers(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6
 
 
 @app.get("/api/market/top-turnover")
-async def get_top_turnover(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$")):
+async def get_top_turnover(range: str = Query(default="today", regex="^(today|last_day|5D|1M|3M|6M|1Y)$")):
     """Top turnover scrips. Cache → DB fallback (most recent trading day)."""
     from .cache import get_cache, make_envelope
     from sqlalchemy import text
 
     cache = get_cache()
-    if range == "1D":
+    if range == "today":
         cached = cache.get("top_turnover")
         if cached:
             return cached
@@ -1220,9 +1523,19 @@ async def get_top_turnover(range: str = Query(default="1D", regex="^(1D|5D|1M|3M
         cutoff = _range_cutoff(range)
         latest = _latest_date(db, DailyTopMover, DailyTopMover.date)
         if latest:
-            if range == "1D":
+            if range == "today":
                 rows = db.query(DailyTopMover).filter(
                     DailyTopMover.date == latest,
+                    DailyTopMover.category == "turnover",
+                ).order_by(DailyTopMover.rank).all()
+                data = [
+                    {"rank": r.rank, "symbol": r.symbol, "ltp": r.ltp, "turnover": r.turnover}
+                    for r in rows
+                ]
+            elif range == "last_day":
+                prev = _previous_date(db, DailyTopMover.date)
+                rows = db.query(DailyTopMover).filter(
+                    DailyTopMover.date == prev,
                     DailyTopMover.category == "turnover",
                 ).order_by(DailyTopMover.rank).all()
                 data = [
@@ -1253,13 +1566,13 @@ async def get_top_turnover(range: str = Query(default="1D", regex="^(1D|5D|1M|3M
 
 
 @app.get("/api/market/breadth")
-async def get_market_breadth(range: str = Query(default="1D", regex="^(1D|5D|1M|3M|6M|1Y|5Y)$")):
+async def get_market_breadth(range: str = Query(default="today", regex="^(today|last_day|5D|1M|3M|6M|1Y)$")):
     """Market breadth (advance/decline/unchanged). Cache → DB → backfill fallback."""
     from .cache import get_cache, make_envelope
     from sqlalchemy import text
 
     cache = get_cache()
-    if range == "1D":
+    if range == "today":
         cached = cache.get("breadth")
         if cached:
             return cached
@@ -1269,9 +1582,20 @@ async def get_market_breadth(range: str = Query(default="1D", regex="^(1D|5D|1M|
         cutoff = _range_cutoff(range)
         latest = _latest_date(db, DailyMarketBreadth, DailyMarketBreadth.date)
         if latest:
-            if range == "1D":
+            if range == "today":
                 row = db.query(DailyMarketBreadth).filter(
                     DailyMarketBreadth.date == latest
+                ).first()
+                if row:
+                    return make_envelope({
+                        "advances": row.advances, "declines": row.declines,
+                        "unchanged": row.unchanged, "total": row.total,
+                        "adRatio": row.ad_ratio,
+                    }, "db")
+            elif range == "last_day":
+                prev = _previous_date(db, DailyMarketBreadth.date)
+                row = db.query(DailyMarketBreadth).filter(
+                    DailyMarketBreadth.date == prev
                 ).first()
                 if row:
                     return make_envelope({
@@ -1468,6 +1792,26 @@ async def get_stock_analysis(symbol: str):
         else:
             change_val = None
 
+        # Override with authoritative daily_top_movers data when available for
+        # the most recent trading day. The NepseAPI top-gainers/losers endpoint
+        # reports official exchange data (including circuit-limit prices) which
+        # is more accurate than the REST intraday snapshot for "today's change".
+        # This fixes the discrepancy where a stock at upper circuit (e.g. +10%)
+        # shows only +1.67% on the details page because the live_market REST
+        # snapshot lags behind the official settlement price.
+        latest_mover_date = _latest_date(db, DailyTopMover, DailyTopMover.date)
+        if latest_mover_date:
+            today_mover = db.query(DailyTopMover).filter(
+                DailyTopMover.symbol == sym,
+                DailyTopMover.date == latest_mover_date,
+            ).first()
+            if today_mover and today_mover.ltp and today_mover.ltp > 0:
+                ltp = today_mover.ltp
+                if today_mover.change_pct is not None:
+                    change_pct = today_mover.change_pct
+                if today_mover.change is not None:
+                    change_val = today_mover.change
+
         # --- 52W metrics — use daily rows only (backfill has correct daily OHLCV) ---
         now = datetime.now(timezone.utc)
         cutoff_1y = now - timedelta(days=365)
@@ -1538,45 +1882,68 @@ async def get_stock_analysis(symbol: str):
                     "alpha30d": alpha,
                 }
 
-        # --- Floorsheet insights ---
-        cutoff_fs = datetime.now(timezone.utc) - timedelta(days=30)
+        # --- Floorsheet insights (last 7 days; broker fields are always null in NepseAPI) ---
+        cutoff_fs = datetime.now(timezone.utc) - timedelta(days=7)
+        cutoff_fs_date = cutoff_fs.date()
+
         fs_stats = db.execute(text("""
             SELECT
-                SUM(quantity * rate) / NULLIF(SUM(quantity), 0) AS vwap,
-                AVG(quantity)  AS avg_trade_size,
-                COUNT(*)       AS total_trades
+                SUM(amount) / NULLIF(SUM(quantity), 0)          AS vwap,
+                AVG(quantity)                                    AS avg_trade_size,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY quantity) AS median_trade_size,
+                COUNT(*)                                         AS total_trades,
+                SUM(amount)                                      AS total_turnover,
+                MAX(quantity)                                    AS max_trade_size
             FROM floorsheet
-            WHERE symbol = :sym AND time >= :cutoff
-        """), {"sym": sym, "cutoff": cutoff_fs}).fetchone()
-
-        top_buyers = db.execute(text("""
-            SELECT buyer AS broker, SUM(quantity) AS total_qty, COUNT(*) AS trades
-            FROM floorsheet
-            WHERE symbol = :sym AND time >= :cutoff
-            GROUP BY buyer ORDER BY total_qty DESC LIMIT 5
-        """), {"sym": sym, "cutoff": cutoff_fs}).fetchall()
-
-        top_sellers = db.execute(text("""
-            SELECT seller AS broker, SUM(quantity) AS total_qty, COUNT(*) AS trades
-            FROM floorsheet
-            WHERE symbol = :sym AND time >= :cutoff
-            GROUP BY seller ORDER BY total_qty DESC LIMIT 5
-        """), {"sym": sym, "cutoff": cutoff_fs}).fetchall()
+            WHERE symbol = :sym AND business_date >= :cutoff
+        """), {"sym": sym, "cutoff": cutoff_fs_date}).fetchone()
 
         floorsheet_data = None
         if fs_stats and fs_stats.total_trades and fs_stats.total_trades > 0:
+            median_qty = fs_stats.median_trade_size or 0
+
+            block_stats = db.execute(text("""
+                SELECT COUNT(*) AS block_count,
+                       COALESCE(SUM(amount), 0) AS block_turnover,
+                       AVG(quantity) AS avg_block_size
+                FROM floorsheet
+                WHERE symbol = :sym AND business_date >= :cutoff
+                  AND quantity > GREATEST(:median * 3, 5000)
+            """), {"sym": sym, "cutoff": cutoff_fs_date, "median": median_qty}).fetchone()
+
+            size_dist = db.execute(text("""
+                SELECT
+                    CASE
+                        WHEN quantity <= 100   THEN 'micro'
+                        WHEN quantity <= 500   THEN 'small'
+                        WHEN quantity <= 2000  THEN 'medium'
+                        WHEN quantity <= 10000 THEN 'large'
+                        ELSE 'block'
+                    END AS bucket,
+                    COUNT(*)   AS trades,
+                    SUM(amount) AS turnover
+                FROM floorsheet
+                WHERE symbol = :sym AND business_date >= :cutoff
+                GROUP BY bucket
+                ORDER BY MIN(quantity)
+            """), {"sym": sym, "cutoff": cutoff_fs_date}).fetchall()
+
             floorsheet_data = {
-                "topBuyers": [
-                    {"broker": r.broker, "quantity": int(r.total_qty), "trades": int(r.trades)}
-                    for r in top_buyers
-                ],
-                "topSellers": [
-                    {"broker": r.broker, "quantity": int(r.total_qty), "trades": int(r.trades)}
-                    for r in top_sellers
-                ],
-                "avgTradeSize": round(fs_stats.avg_trade_size, 0) if fs_stats.avg_trade_size else None,
                 "vwap": round(fs_stats.vwap, 2) if fs_stats.vwap else None,
+                "avgTradeSize": round(fs_stats.avg_trade_size, 0) if fs_stats.avg_trade_size else None,
+                "medianTradeSize": round(fs_stats.median_trade_size, 0) if fs_stats.median_trade_size else None,
                 "totalTrades": int(fs_stats.total_trades),
+                "totalTurnover": round(fs_stats.total_turnover, 2) if fs_stats.total_turnover else None,
+                "maxTradeSize": int(fs_stats.max_trade_size) if fs_stats.max_trade_size else None,
+                "blockTrades": {
+                    "count": int(block_stats.block_count),
+                    "turnover": round(block_stats.block_turnover, 2),
+                    "avgSize": round(block_stats.avg_block_size, 0) if block_stats.avg_block_size else 0,
+                } if block_stats else None,
+                "sizeDistribution": [
+                    {"bucket": r.bucket, "trades": int(r.trades), "turnover": round(r.turnover, 2)}
+                    for r in size_dist
+                ],
             }
 
         # --- Company name + sector ---

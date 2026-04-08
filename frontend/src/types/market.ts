@@ -3,18 +3,18 @@
 export type TimeInterval = '1min' | '5min' | '15min' | '30min' | '1H' | '4H' | '1D'
 
 export const VALID_INTERVALS: Record<string, TimeInterval[]> = {
-  '1D':  ['1min', '5min', '15min', '30min', '1H'],
+  'today':    ['1min', '5min', '15min', '30min', '1H'],
+  'last_day': ['1min', '5min', '15min', '30min', '1H'],
   '5D':  ['5min', '15min', '30min', '1H', '4H'],
   '1M':  ['15min', '30min', '1H', '4H', '1D'],
   '3M':  ['1H', '4H', '1D'],
   '6M':  ['4H', '1D'],
   '1Y':  ['1D'],
-  '5Y':  ['1D'],
 }
 
 export const DEFAULT_INTERVAL: Record<string, TimeInterval> = {
-  '1D': '1min', '5D': '15min', '1M': '1H',
-  '3M': '1D', '6M': '1D', '1Y': '1D', '5Y': '1D',
+  'today': '1min', 'last_day': '1min', '5D': '15min', '1M': '1H',
+  '3M': '1D', '6M': '1D', '1Y': '1D',
 }
 
 export interface StockChartPoint {
@@ -123,12 +123,45 @@ export interface AIInsight {
 }
 
 export interface FloorsheetRow {
-  symbol: string
-  buyer: string
-  seller: string
+  contractId: number
+  time: string
   quantity: number
   rate: number
-  time: string
+  amount: number
+}
+
+export interface FloorsheetAnalytics {
+  vwap: number | null
+  avgTradeSize: number | null
+  medianTradeSize: number | null
+  totalTrades: number
+  totalTurnover: number | null
+  maxTradeSize: number | null
+  priceRange?: { high: number | null; low: number | null }
+  blockTrades: {
+    count: number
+    turnover: number
+    avgSize?: number
+  } | null
+  sizeDistribution: { bucket: string; trades: number; turnover: number }[]
+  intradayPattern?: { hour: number; trades: number; turnover: number; vwap: number | null }[]
+}
+
+export interface FloorsheetResponse {
+  symbol: string
+  trades: FloorsheetRow[]
+  analytics: FloorsheetAnalytics | null
+}
+
+export interface MarketFloorsheetSummary {
+  date: string
+  totalTrades: number
+  totalTurnover: number
+  avgTradeSize: number | null
+  topByTurnover: { symbol: string; turnover: number; trades: number; vwap: number | null }[]
+  topByTrades: { symbol: string; trades: number; turnover: number }[]
+  blockLeaders: { symbol: string; blockCount: number; blockTurnover: number; blockPct: number }[]
+  tradeSizeProfile: { bucket: string; trades: number; turnover: number; tradePct: number; turnoverPct: number }[]
 }
 
 export interface IntradayPoint {
@@ -231,11 +264,18 @@ export interface StockAnalysis {
     alpha30d: number | null
   } | null
   floorsheet: {
-    topBuyers: { broker: string; quantity: number; trades: number }[]
-    topSellers: { broker: string; quantity: number; trades: number }[]
-    avgTradeSize: number | null
     vwap: number | null
+    avgTradeSize: number | null
+    medianTradeSize: number | null
     totalTrades: number
+    totalTurnover: number | null
+    maxTradeSize: number | null
+    blockTrades: {
+      count: number
+      turnover: number
+      avgSize?: number
+    } | null
+    sizeDistribution: { bucket: string; trades: number; turnover: number }[]
   } | null
   history: OHLCVPoint[]
   overlays: {

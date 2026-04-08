@@ -141,6 +141,17 @@ class IngestionScheduler:
             misfire_grace_time=600,
         )
 
+        # Floorsheet ingestion: every 5 min during market hours (same cadence as live prices)
+        self.scheduler.add_job(
+            self.ingest_floorsheet,
+            market_trigger,
+            id="ingest_floorsheet",
+            name="Ingest floorsheet trades",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+        )
+
         # Floorsheet retention: weekly cleanup on Monday at 2 AM NPT
         self.scheduler.add_job(
             self.cleanup_old_floorsheet,
@@ -642,6 +653,52 @@ class IngestionScheduler:
         finally:
             db.close()
 
+    async def ingest_floorsheet(self):
+        """Fetch full market floorsheet and store new trades (deduped by contract_id)."""
+        from datetime import date as date_type
+        db = self.db_session_factory()
+        try:
+            market_status = await self.provider_manager.get_market_status()
+            if market_status.get("isOpen") == "CLOSE":
+                logger.info("Market closed, skipping floorsheet ingest")
+                return
+
+            raw = await self.provider_manager.get_floorsheet_full()
+            if not raw:
+                logger.info("No floorsheet data returned")
+                return
+
+            rows = []
+            for item in raw:
+                contract_id = item.get("contractId")
+                symbol = item.get("stockSymbol", "").strip()
+                if not contract_id or not symbol:
+                    continue
+                rows.append({
+                    "contract_id": int(contract_id),
+                    "symbol": symbol,
+                    "stock_id": item.get("stockId"),
+                    "quantity": int(item.get("contractQuantity") or 0),
+                    "rate": float(item.get("contractRate") or 0),
+                    "amount": float(item.get("contractAmount") or 0),
+                    "time": item.get("tradeTime"),
+                    "business_date": item.get("businessDate"),
+                    "security_name": item.get("securityName"),
+                })
+
+            if rows:
+                stmt = pg_insert(Floorsheet).values(rows)
+                stmt = stmt.on_conflict_do_nothing(constraint="uq_floorsheet_contract_id")
+                db.execute(stmt)
+                db.commit()
+                logger.info(f"Floorsheet ingest: {len(rows)} trades processed")
+
+        except Exception as e:
+            logger.error(f"Floorsheet ingest failed: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
     async def cleanup_old_floorsheet(self):
         """Delete floorsheet rows older than 90 days."""
         db = self.db_session_factory()
@@ -649,8 +706,9 @@ class IngestionScheduler:
             from sqlalchemy import delete
             from datetime import timedelta
 
-            cutoff = datetime.now(timezone.utc) - timedelta(days=90)
-            stmt = delete(Floorsheet).where(Floorsheet.time < cutoff)
+            from datetime import date as date_type
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).date()
+            stmt = delete(Floorsheet).where(Floorsheet.business_date < cutoff)
             result = db.execute(stmt)
             db.commit()
             logger.info(f"Deleted {result.rowcount} old floorsheet rows")

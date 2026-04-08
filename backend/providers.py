@@ -38,6 +38,11 @@ class DataProvider(ABC):
         pass
 
     @abstractmethod
+    async def get_floorsheet_full(self) -> List[Dict[str, Any]]:
+        """Return full market floorsheet (all symbols, all trades for the day)."""
+        pass
+
+    @abstractmethod
     async def get_sub_indices(self) -> List[Dict[str, Any]]:
         """Return 13 sector sub-indices."""
         pass
@@ -191,6 +196,17 @@ class NepseAPIProvider(DataProvider):
             return data if isinstance(data, list) else []
         except httpx.HTTPError as e:
             logger.error(f"NepseAPI floorsheet({symbol}) failed: {e}")
+            raise
+
+    async def get_floorsheet_full(self) -> List[Dict[str, Any]]:
+        """Fetch full market floorsheet (all symbols, all trades for the day)."""
+        try:
+            response = await self.client.get(f"{self.base_url}/Floorsheet")
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, list) else []
+        except httpx.HTTPError as e:
+            logger.error(f"NepseAPI floorsheet_full failed: {e}")
             raise
 
     async def get_sub_indices(self) -> List[Dict[str, Any]]:
@@ -355,6 +371,16 @@ class DataProviderManager:
                 self.failed_over = True
                 return await self.fallback.get_floorsheet(symbol)
             raise
+
+    async def get_floorsheet_full(self) -> List[Dict[str, Any]]:
+        """Get full market floorsheet, failover if needed."""
+        try:
+            return await self.primary.get_floorsheet_full()
+        except (httpx.HTTPError, Exception) as e:
+            logger.warning(f"Primary failed for floorsheet_full: {e}")
+            if self.fallback and hasattr(self.fallback, "get_floorsheet_full"):
+                return await self.fallback.get_floorsheet_full()
+            return []
 
     async def get_sub_indices(self) -> List[Dict[str, Any]]:
         """Get sector sub-indices, failover if needed."""

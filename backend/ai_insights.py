@@ -105,6 +105,31 @@ def _gather_market_context(db: Session) -> dict:
             for n in recent_news
         ]
 
+    # Today's floorsheet summary (top traded + block trade activity)
+    fs_summary = db.execute(sql_text("""
+        SELECT symbol,
+               COUNT(*) AS trades,
+               SUM(amount) AS turnover,
+               SUM(amount) / NULLIF(SUM(quantity), 0) AS vwap,
+               COUNT(*) FILTER (WHERE quantity > 5000) AS block_count
+        FROM floorsheet
+        WHERE business_date = :today
+        GROUP BY symbol
+        ORDER BY SUM(amount) DESC
+        LIMIT 10
+    """), {"today": today}).fetchall()
+    if fs_summary:
+        ctx["floorsheet_leaders"] = [
+            {
+                "symbol": r.symbol,
+                "trades": int(r.trades),
+                "turnover": round(r.turnover, 0),
+                "vwap": round(r.vwap, 2) if r.vwap else None,
+                "blockTrades": int(r.block_count),
+            }
+            for r in fs_summary
+        ]
+
     return ctx
 
 
@@ -267,8 +292,11 @@ Write a weekly market wrap in plain text (no markdown, no code fences) with exac
 Keep the total {word_limit}. {detail_instr} Be analytical, not just descriptive. Reference key news events from the week where relevant."""
 
 
-async def generate_insight(db: Session, provider_manager, insight_type: str, options: dict | None = None) -> None:
-    """Generate and store a Claude insight of the specified type. Skips if no API key."""
+async def generate_insight(db: Session, provider_manager, insight_type: str, options: dict | None = None, force: bool = False) -> None:
+    """Generate and store a Claude insight of the specified type. Skips if no API key.
+
+    Pass force=True to bypass the holiday guard (used by manual admin triggers).
+    """
     if not settings.claude_api_key:
         logger.info("No CLAUDE_API_KEY configured, skipping AI insight generation")
         return
@@ -280,13 +308,15 @@ async def generate_insight(db: Session, provider_manager, insight_type: str, opt
 
     # Holiday guard: skip if the market hasn't had any activity in the last 8 hours.
     # This prevents wasting Claude API calls on weekends and public holidays.
-    recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=8)
-    recent_activity = db.query(MarketSummary).filter(
-        MarketSummary.time >= recent_cutoff
-    ).first()
-    if not recent_activity:
-        logger.info("No market activity in last 8h (holiday or weekend), skipping AI insight")
-        return
+    # Bypassed when force=True (manual admin trigger).
+    if not force:
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=8)
+        recent_activity = db.query(MarketSummary).filter(
+            MarketSummary.time >= recent_cutoff
+        ).first()
+        if not recent_activity:
+            logger.info("No market activity in last 8h (holiday or weekend), skipping AI insight")
+            return
 
     opts = options or {}
 
@@ -440,6 +470,17 @@ def _build_stock_insight_prompt(symbol: str, analysis: dict, options: dict | Non
         f"Signals: Trend={sig.get('trend')}, Momentum={sig.get('momentum')}, "
         f"Volume={sig.get('volumeTrend')}, vs SMA={sig.get('priceVsSMA')}"
     )
+
+    fs = analysis.get("floorsheet") or {}
+    if fs.get("totalTrades"):
+        bt = fs.get("blockTrades") or {}
+        total_to = fs.get("totalTurnover") or 1
+        block_pct = round((bt.get("turnover") or 0) / max(total_to, 1) * 100, 1)
+        data_parts.append(
+            f"Floorsheet (7D): {fs['totalTrades']} trades, VWAP=Rs {_f(fs.get('vwap'))}, "
+            f"Avg/Median size={_f(fs.get('avgTradeSize'), 0)}/{_f(fs.get('medianTradeSize'), 0)} shares, "
+            f"Block trades={bt.get('count', 0)} ({block_pct}% of turnover)"
+        )
 
     config_lines = [f"Analysis horizon: {horizon_label}."]
     if goal_label:
