@@ -592,27 +592,93 @@ async def admin_run_ingest_news():
 
 
 @app.get("/api/stocks/{symbol}/floorsheet")
-async def get_symbol_floorsheet(symbol: str, limit: int = 200, days: int = 30):
-    """Get recent floorsheet for symbol. Defaults to last 30 days, max 500 rows."""
-    limit = min(limit, 500)
+async def get_symbol_floorsheet(symbol: str, limit: int = 5000, days: int = 1):
+    """Get floorsheet trades + analytics for symbol with per-trade anomaly flags.
+
+    Returns every contract for the period, session-level analytics, and anomaly
+    flags (volumeSpike, bigAmount, priceDeviation) on each trade.
+    """
+    from sqlalchemy import text
+    import statistics
+
+    symbol = symbol.upper()
+    limit = min(limit, 10000)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     db = SessionLocal()
     try:
-        floorsheet = db.query(Floorsheet).filter(
-            Floorsheet.symbol == symbol,
-            Floorsheet.time >= cutoff,
-        ).order_by(Floorsheet.time.desc()).limit(limit).all()
-        return [
-            {
-                "symbol": f.symbol,
-                "buyer": f.buyer,
-                "seller": f.seller,
-                "quantity": f.quantity,
-                "rate": f.rate,
-                "time": f.time,
-            }
-            for f in floorsheet
-        ]
+        # Fetch all trades for the period
+        rows = db.execute(text("""
+            SELECT contract_no, symbol, buyer, seller, quantity, rate, time
+            FROM floorsheet
+            WHERE symbol = :sym AND time >= :cutoff
+            ORDER BY time DESC
+            LIMIT :lim
+        """), {"sym": symbol, "cutoff": cutoff, "lim": limit}).fetchall()
+
+        if not rows:
+            return {"symbol": symbol, "trades": [], "analytics": None}
+
+        # Compute session-level stats for anomaly detection
+        quantities = [r.quantity for r in rows]
+        amounts = [r.quantity * r.rate for r in rows]
+        rates = [r.rate for r in rows]
+
+        median_qty = statistics.median(quantities)
+        avg_amount = statistics.mean(amounts)
+        total_volume = sum(quantities)
+        total_turnover = sum(amounts)
+        vwap = total_turnover / total_volume if total_volume > 0 else 0
+        rate_stddev = statistics.stdev(rates) if len(rates) > 1 else 0
+
+        # Anomaly thresholds
+        vol_threshold = median_qty * 2
+        amt_threshold = avg_amount * 2
+        price_threshold = rate_stddev * 2  # 2-sigma
+
+        # Build trade list with anomaly flags
+        trades = []
+        for r in rows:
+            amount = r.quantity * r.rate
+            anomalies = []
+            if r.quantity > vol_threshold:
+                anomalies.append("volumeSpike")
+            if amount > amt_threshold:
+                anomalies.append("bigAmount")
+            if rate_stddev > 0 and abs(r.rate - vwap) > price_threshold:
+                anomalies.append("priceDeviation")
+            trades.append({
+                "contractNo": r.contract_no,
+                "symbol": r.symbol,
+                "buyer": r.buyer or "—",
+                "seller": r.seller or "—",
+                "quantity": r.quantity,
+                "rate": r.rate,
+                "amount": round(amount, 2),
+                "time": r.time,
+                "anomalies": anomalies,
+            })
+
+        analytics = {
+            "totalTrades": len(rows),
+            "totalVolume": total_volume,
+            "totalTurnover": round(total_turnover, 2),
+            "vwap": round(vwap, 2),
+            "medianTradeSize": round(median_qty, 0),
+            "avgTradeSize": round(statistics.mean(quantities), 0),
+            "maxTradeSize": max(quantities),
+            "rateStddev": round(rate_stddev, 2),
+            "priceRange": {
+                "high": max(rates),
+                "low": min(rates),
+            },
+            "anomalyThresholds": {
+                "volumeSpike": round(vol_threshold, 0),
+                "bigAmount": round(amt_threshold, 2),
+                "priceDeviation": round(price_threshold, 2),
+            },
+        }
+
+        return {"symbol": symbol, "trades": trades, "analytics": analytics}
     finally:
         db.close()
 

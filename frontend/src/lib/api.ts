@@ -10,7 +10,7 @@ import type {
   OHLCVPoint,
   Company,
   AIInsight,
-  FloorsheetRow,
+  FloorsheetResponse,
   StockAnalysis,
   IntradayPoint,
   SectorIntradayData,
@@ -107,15 +107,15 @@ export async function fetchInsightHistory(limit = 10): Promise<AIInsight[]> {
   return res.json()
 }
 
-export async function fetchFloorsheet(symbol: string, limit = 200): Promise<FloorsheetRow[]> {
+export async function fetchFloorsheet(symbol: string, limit = 5000, days = 1): Promise<FloorsheetResponse> {
+  const empty: FloorsheetResponse = { symbol, trades: [], analytics: null }
   const res = await fetch(
-    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/floorsheet?limit=${limit}`,
+    `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/floorsheet?limit=${limit}&days=${days}`,
     { mode: 'cors' }
   )
-  if (!res.ok) return []
+  if (!res.ok) return empty
   const data = await res.json()
-  // endpoint returns ApiEnvelope or raw array
-  return Array.isArray(data) ? data : (data.data ?? [])
+  return data as FloorsheetResponse
 }
 
 export async function fetchStockIntraday(symbol: string): Promise<IntradayPoint[]> {

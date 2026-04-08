@@ -11,7 +11,7 @@ import TechnicalsCard from '@/components/stock/TechnicalsCard'
 import VolumeCard from '@/components/stock/VolumeCard'
 import VolatilityCard from '@/components/stock/VolatilityCard'
 import RelPerfCard from '@/components/stock/RelPerfCard'
-import FloorsheetCard from '@/components/stock/FloorsheetCard'
+import FloorsheetTimeline from '@/components/stock/FloorsheetTimeline'
 import StockChartPanel from '@/components/stock/StockChartPanel'
 import StockAIPanel from '@/components/stock/StockAIPanel'
 import StockNewsCard from '@/components/stock/StockNewsCard'
@@ -110,10 +110,8 @@ export default function StockPage() {
         {/* Row 3: AI Analysis + Chat */}
         <StockAIPanel symbol={symbol} />
 
-        {/* Row 4: Floorsheet (conditional) */}
-        {analysis.floorsheet && (
-          <FloorsheetCard floorsheet={analysis.floorsheet} />
-        )}
+        {/* Row 4: Floorsheet Timeline — every contract grouped by 10-min windows */}
+        <FloorsheetTimeline symbol={symbol} />
       </main>
     </div>
   )

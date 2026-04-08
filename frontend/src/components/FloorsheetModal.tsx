@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { fetchFloorsheet } from '@/lib/api'
-import { formatPrice, formatVolume, formatNPT } from '@/lib/format'
+import { formatPrice, formatNPT } from '@/lib/format'
 import type { FloorsheetRow } from '@/types/market'
 
 interface FloorsheetModalProps {
@@ -23,7 +23,7 @@ export default function FloorsheetModal({ symbol, onClose }: FloorsheetModalProp
     setRows([])
     try {
       const data = await fetchFloorsheet(sym)
-      setRows(data)
+      setRows(data.trades)
     } finally {
       setLoading(false)
     }
@@ -104,7 +104,7 @@ export default function FloorsheetModal({ symbol, onClose }: FloorsheetModalProp
                     <td className="px-4 py-1.5 text-right text-slate-300">{row.quantity.toLocaleString('en-IN')}</td>
                     <td className="px-4 py-1.5 text-right text-slate-300">{formatPrice(row.rate)}</td>
                     <td className="px-4 py-1.5 text-right text-slate-400">
-                      {formatVolume(row.quantity * row.rate)}
+                      {formatPrice(row.amount)}
                     </td>
                   </tr>
                 ))}

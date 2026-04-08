@@ -122,13 +122,41 @@ export interface AIInsight {
   extra_data?: Record<string, unknown>
 }
 
+export type AnomalyType = 'volumeSpike' | 'bigAmount' | 'priceDeviation'
+
 export interface FloorsheetRow {
+  contractNo: number
   symbol: string
   buyer: string
   seller: string
   quantity: number
   rate: number
+  amount: number
   time: string
+  anomalies: AnomalyType[]
+}
+
+export interface FloorsheetAnalytics {
+  totalTrades: number
+  totalVolume: number
+  totalTurnover: number
+  vwap: number
+  medianTradeSize: number
+  avgTradeSize: number
+  maxTradeSize: number
+  rateStddev: number
+  priceRange: { high: number; low: number }
+  anomalyThresholds: {
+    volumeSpike: number
+    bigAmount: number
+    priceDeviation: number
+  }
+}
+
+export interface FloorsheetResponse {
+  symbol: string
+  trades: FloorsheetRow[]
+  analytics: FloorsheetAnalytics | null
 }
 
 export interface IntradayPoint {
