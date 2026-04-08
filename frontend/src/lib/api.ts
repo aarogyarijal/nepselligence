@@ -108,13 +108,15 @@ export async function fetchInsightHistory(limit = 10): Promise<AIInsight[]> {
   return res.json()
 }
 
-export async function fetchFloorsheet(symbol: string, limit = 200, days = 1): Promise<FloorsheetResponse> {
+export async function fetchFloorsheet(symbol: string, limit = 5000, days = 1): Promise<FloorsheetResponse> {
+  const empty: FloorsheetResponse = { symbol, trades: [], analytics: null }
   const res = await fetch(
     `${API_URL}/api/stocks/${encodeURIComponent(symbol)}/floorsheet?limit=${limit}&days=${days}`,
     { mode: 'cors' }
   )
-  if (!res.ok) return { symbol, trades: [], analytics: null }
-  return res.json()
+  if (!res.ok) return empty
+  const data = await res.json()
+  return data as FloorsheetResponse
 }
 
 export async function fetchMarketFloorsheetSummary(date?: string): Promise<MarketFloorsheetSummary | null> {

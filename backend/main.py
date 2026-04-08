@@ -656,234 +656,93 @@ async def admin_run_ingest_floorsheet():
 
 
 @app.get("/api/stocks/{symbol}/floorsheet")
-async def get_symbol_floorsheet(symbol: str, limit: int = 200, days: int = 1):
-    """Get recent floorsheet trades + analytics for symbol.
+async def get_symbol_floorsheet(symbol: str, limit: int = 5000, days: int = 1):
+    """Get floorsheet trades + analytics for symbol with per-trade anomaly flags.
 
-    Returns both raw trades (up to limit, ordered newest first) and computed
-    trade-level analytics (VWAP, trade size distribution, block trades, intraday pattern).
-    Defaults to today's trades (days=1).
+    Returns every contract for the period, session-level analytics, and anomaly
+    flags (volumeSpike, bigAmount, priceDeviation) on each trade.
     """
     from sqlalchemy import text
+    import statistics
+
     symbol = symbol.upper()
-    limit = min(limit, 500)
-    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).date()
+    limit = min(limit, 10000)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     db = SessionLocal()
     try:
-        trades = db.execute(text("""
-            SELECT contract_id, symbol, quantity, rate, amount, time, security_name
+        # Fetch all trades for the period
+        rows = db.execute(text("""
+            SELECT contract_no, symbol, buyer, seller, quantity, rate, time
             FROM floorsheet
-            WHERE symbol = :sym AND business_date >= :cutoff
+            WHERE symbol = :sym AND time >= :cutoff
             ORDER BY time DESC
             LIMIT :lim
-        """), {"sym": symbol, "cutoff": cutoff_date, "lim": limit}).fetchall()
+        """), {"sym": symbol, "cutoff": cutoff, "lim": limit}).fetchall()
 
-        # Analytics over the same window
-        stats = db.execute(text("""
-            SELECT
-                SUM(amount) / NULLIF(SUM(quantity), 0)               AS vwap,
-                AVG(quantity)                                         AS avg_trade_size,
-                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY quantity) AS median_trade_size,
-                COUNT(*)                                              AS total_trades,
-                SUM(amount)                                           AS total_turnover,
-                MAX(quantity)                                         AS max_trade_size,
-                MAX(rate)                                             AS high,
-                MIN(rate)                                             AS low
-            FROM floorsheet
-            WHERE symbol = :sym AND business_date >= :cutoff
-        """), {"sym": symbol, "cutoff": cutoff_date}).fetchone()
+        if not rows:
+            return {"symbol": symbol, "trades": [], "analytics": None}
 
-        size_dist = db.execute(text("""
-            SELECT
-                CASE
-                    WHEN quantity <= 100   THEN 'micro'
-                    WHEN quantity <= 500   THEN 'small'
-                    WHEN quantity <= 2000  THEN 'medium'
-                    WHEN quantity <= 10000 THEN 'large'
-                    ELSE 'block'
-                END AS bucket,
-                COUNT(*)    AS trades,
-                SUM(amount) AS turnover
-            FROM floorsheet
-            WHERE symbol = :sym AND business_date >= :cutoff
-            GROUP BY bucket
-            ORDER BY MIN(quantity)
-        """), {"sym": symbol, "cutoff": cutoff_date}).fetchall()
+        # Compute session-level stats for anomaly detection
+        quantities = [r.quantity for r in rows]
+        amounts = [r.quantity * r.rate for r in rows]
+        rates = [r.rate for r in rows]
 
-        intraday = db.execute(text("""
-            SELECT
-                EXTRACT(HOUR FROM time AT TIME ZONE 'Asia/Kathmandu') AS hour,
-                COUNT(*)    AS trades,
-                SUM(amount) AS turnover,
-                SUM(amount) / NULLIF(SUM(quantity), 0) AS vwap
-            FROM floorsheet
-            WHERE symbol = :sym AND business_date >= :cutoff
-            GROUP BY hour
-            ORDER BY hour
-        """), {"sym": symbol, "cutoff": cutoff_date}).fetchall()
+        median_qty = statistics.median(quantities)
+        avg_amount = statistics.mean(amounts)
+        total_volume = sum(quantities)
+        total_turnover = sum(amounts)
+        vwap = total_turnover / total_volume if total_volume > 0 else 0
+        rate_stddev = statistics.stdev(rates) if len(rates) > 1 else 0
 
-        analytics = None
-        if stats and stats.total_trades and stats.total_trades > 0:
-            median_qty = stats.median_trade_size or 0
-            block_stats = db.execute(text("""
-                SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS turnover
-                FROM floorsheet
-                WHERE symbol = :sym AND business_date >= :cutoff
-                  AND quantity > GREATEST(:median * 3, 5000)
-            """), {"sym": symbol, "cutoff": cutoff_date, "median": median_qty}).fetchone()
+        # Anomaly thresholds
+        vol_threshold = median_qty * 2
+        amt_threshold = avg_amount * 2
+        price_threshold = rate_stddev * 2  # 2-sigma
 
-            analytics = {
-                "vwap": round(stats.vwap, 2) if stats.vwap else None,
-                "avgTradeSize": round(stats.avg_trade_size, 0) if stats.avg_trade_size else None,
-                "medianTradeSize": round(stats.median_trade_size, 0) if stats.median_trade_size else None,
-                "totalTrades": int(stats.total_trades),
-                "totalTurnover": round(stats.total_turnover, 2) if stats.total_turnover else None,
-                "maxTradeSize": int(stats.max_trade_size) if stats.max_trade_size else None,
-                "priceRange": {
-                    "high": stats.high,
-                    "low": stats.low,
-                },
-                "blockTrades": {
-                    "count": int(block_stats.cnt),
-                    "turnover": round(block_stats.turnover, 2),
-                } if block_stats else None,
-                "sizeDistribution": [
-                    {"bucket": r.bucket, "trades": int(r.trades), "turnover": round(r.turnover, 2)}
-                    for r in size_dist
-                ],
-                "intradayPattern": [
-                    {
-                        "hour": int(r.hour),
-                        "trades": int(r.trades),
-                        "turnover": round(r.turnover, 2),
-                        "vwap": round(r.vwap, 2) if r.vwap else None,
-                    }
-                    for r in intraday
-                ],
-            }
+        # Build trade list with anomaly flags
+        trades = []
+        for r in rows:
+            amount = r.quantity * r.rate
+            anomalies = []
+            if r.quantity > vol_threshold:
+                anomalies.append("volumeSpike")
+            if amount > amt_threshold:
+                anomalies.append("bigAmount")
+            if rate_stddev > 0 and abs(r.rate - vwap) > price_threshold:
+                anomalies.append("priceDeviation")
+            trades.append({
+                "contractNo": r.contract_no,
+                "symbol": r.symbol,
+                "buyer": r.buyer or "—",
+                "seller": r.seller or "—",
+                "quantity": r.quantity,
+                "rate": r.rate,
+                "amount": round(amount, 2),
+                "time": r.time,
+                "anomalies": anomalies,
+            })
 
-        return {
-            "symbol": symbol,
-            "trades": [
-                {
-                    "contractId": t.contract_id,
-                    "time": t.time,
-                    "quantity": t.quantity,
-                    "rate": t.rate,
-                    "amount": t.amount,
-                }
-                for t in trades
-            ],
-            "analytics": analytics,
-        }
-    finally:
-        db.close()
-
-
-@app.get("/api/market/floorsheet-summary")
-async def get_market_floorsheet_summary(date: Optional[str] = None):
-    """Market-wide floorsheet summary for a given date (default: today).
-
-    Returns total trades/turnover, top symbols by turnover and by trade count,
-    block trade leaders, and market-wide trade size profile.
-    """
-    from sqlalchemy import text
-    from datetime import date as date_type
-    if date:
-        try:
-            target_date = date_type.fromisoformat(date)
-        except ValueError:
-            return {"error": "Invalid date format. Use YYYY-MM-DD."}
-    else:
-        target_date = datetime.now(NPT).date()
-
-    db = SessionLocal()
-    try:
-        totals = db.execute(text("""
-            SELECT COUNT(*) AS total_trades, SUM(amount) AS total_turnover, AVG(quantity) AS avg_trade_size
-            FROM floorsheet WHERE business_date = :d
-        """), {"d": target_date}).fetchone()
-
-        if not totals or not totals.total_trades:
-            return {"date": target_date.isoformat(), "totalTrades": 0, "totalTurnover": 0, "topByTurnover": [], "topByTrades": [], "blockLeaders": [], "tradeSizeProfile": []}
-
-        top_turnover = db.execute(text("""
-            SELECT symbol, SUM(amount) AS turnover, COUNT(*) AS trades,
-                   SUM(amount) / NULLIF(SUM(quantity), 0) AS vwap
-            FROM floorsheet WHERE business_date = :d
-            GROUP BY symbol ORDER BY turnover DESC LIMIT 10
-        """), {"d": target_date}).fetchall()
-
-        top_trades = db.execute(text("""
-            SELECT symbol, COUNT(*) AS trades, SUM(amount) AS turnover
-            FROM floorsheet WHERE business_date = :d
-            GROUP BY symbol ORDER BY trades DESC LIMIT 10
-        """), {"d": target_date}).fetchall()
-
-        block_leaders = db.execute(text("""
-            SELECT symbol,
-                   COUNT(*) FILTER (WHERE quantity > 5000) AS block_count,
-                   SUM(amount) FILTER (WHERE quantity > 5000) AS block_turnover,
-                   SUM(amount) AS total_turnover
-            FROM floorsheet WHERE business_date = :d
-            GROUP BY symbol
-            HAVING COUNT(*) FILTER (WHERE quantity > 5000) > 0
-            ORDER BY block_count DESC LIMIT 10
-        """), {"d": target_date}).fetchall()
-
-        size_profile = db.execute(text("""
-            SELECT
-                CASE
-                    WHEN quantity <= 100   THEN 'micro'
-                    WHEN quantity <= 500   THEN 'small'
-                    WHEN quantity <= 2000  THEN 'medium'
-                    WHEN quantity <= 10000 THEN 'large'
-                    ELSE 'block'
-                END AS bucket,
-                COUNT(*)    AS trades,
-                SUM(amount) AS turnover
-            FROM floorsheet WHERE business_date = :d
-            GROUP BY bucket ORDER BY MIN(quantity)
-        """), {"d": target_date}).fetchall()
-
-        total_turnover = totals.total_turnover or 0
-        return {
-            "date": target_date.isoformat(),
-            "totalTrades": int(totals.total_trades),
+        analytics = {
+            "totalTrades": len(rows),
+            "totalVolume": total_volume,
             "totalTurnover": round(total_turnover, 2),
-            "avgTradeSize": round(totals.avg_trade_size, 0) if totals.avg_trade_size else None,
-            "topByTurnover": [
-                {
-                    "symbol": r.symbol,
-                    "turnover": round(r.turnover, 2),
-                    "trades": int(r.trades),
-                    "vwap": round(r.vwap, 2) if r.vwap else None,
-                }
-                for r in top_turnover
-            ],
-            "topByTrades": [
-                {"symbol": r.symbol, "trades": int(r.trades), "turnover": round(r.turnover, 2)}
-                for r in top_trades
-            ],
-            "blockLeaders": [
-                {
-                    "symbol": r.symbol,
-                    "blockCount": int(r.block_count),
-                    "blockTurnover": round(r.block_turnover or 0, 2),
-                    "blockPct": round((r.block_turnover or 0) / max(r.total_turnover, 1) * 100, 1),
-                }
-                for r in block_leaders
-            ],
-            "tradeSizeProfile": [
-                {
-                    "bucket": r.bucket,
-                    "trades": int(r.trades),
-                    "turnover": round(r.turnover, 2),
-                    "tradePct": round(int(r.trades) / max(totals.total_trades, 1) * 100, 1),
-                    "turnoverPct": round(r.turnover / max(total_turnover, 1) * 100, 1),
-                }
-                for r in size_profile
-            ],
+            "vwap": round(vwap, 2),
+            "medianTradeSize": round(median_qty, 0),
+            "avgTradeSize": round(statistics.mean(quantities), 0),
+            "maxTradeSize": max(quantities),
+            "rateStddev": round(rate_stddev, 2),
+            "priceRange": {
+                "high": max(rates),
+                "low": min(rates),
+            },
+            "anomalyThresholds": {
+                "volumeSpike": round(vol_threshold, 0),
+                "bigAmount": round(amt_threshold, 2),
+                "priceDeviation": round(price_threshold, 2),
+            },
         }
+
+        return {"symbol": symbol, "trades": trades, "analytics": analytics}
     finally:
         db.close()
 
