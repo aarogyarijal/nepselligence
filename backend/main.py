@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 import asyncio
+import os
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -152,7 +153,9 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8080"],
+    # Extra origins (comma-separated) for running on another host, e.g. http://aarogya-swift:3000
+    allow_origins=["http://localhost:3000", "http://localhost:8080"]
+    + [o.strip() for o in os.environ.get("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -382,6 +385,180 @@ async def get_insight_history(limit: int = 10):
         db.close()
 
 
+# ---------------------------------------------------------------------------
+# AI Memory endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/ai/predictions")
+async def get_ai_predictions(status: str = "pending", symbol: str = None, limit: int = 20):
+    """Get tracked AI predictions with optional status and symbol filters."""
+    from .models import AIPrediction
+    db = SessionLocal()
+    try:
+        q = db.query(AIPrediction).order_by(AIPrediction.created_at.desc())
+        if status:
+            q = q.filter(AIPrediction.status == status)
+        if symbol:
+            q = q.filter(AIPrediction.symbol == symbol.upper())
+        preds = q.limit(min(limit, 50)).all()
+        return [
+            {
+                "id": p.id,
+                "prediction_date": str(p.prediction_date),
+                "target_date": str(p.target_date) if p.target_date else None,
+                "category": p.category,
+                "symbol": p.symbol,
+                "sector": p.sector,
+                "prediction_text": p.prediction_text,
+                "conditions": p.conditions,
+                "reference_values": p.reference_values,
+                "status": p.status,
+                "resolution_text": p.resolution_text,
+                "resolved_at": _to_npt_iso(p.resolved_at) if p.resolved_at else None,
+                "outcome_values": p.outcome_values,
+            }
+            for p in preds
+        ]
+    finally:
+        db.close()
+
+
+@app.get("/api/ai/scorecard")
+async def get_ai_scorecard(days: int = 30):
+    """Get AI prediction hit rate scorecard."""
+    from .ai_memory import get_prediction_scorecard
+    db = SessionLocal()
+    try:
+        return get_prediction_scorecard(db, days=min(days, 365))
+    finally:
+        db.close()
+
+
+@app.get("/api/ai/regime/history")
+async def get_ai_regime_history(days: int = 30):
+    """Get market regime history."""
+    from .models import AIMarketRegime
+    from datetime import date, timedelta
+    db = SessionLocal()
+    try:
+        cutoff = date.today() - timedelta(days=min(days, 365))
+        regimes = db.query(AIMarketRegime).filter(
+            AIMarketRegime.date >= cutoff
+        ).order_by(AIMarketRegime.date.desc()).all()
+        return [
+            {
+                "date": str(r.date),
+                "trend": r.trend,
+                "trend_strength": r.trend_strength,
+                "volatility_regime": r.volatility_regime,
+                "breadth_health": r.breadth_health,
+                "leading_sectors": r.leading_sectors,
+                "lagging_sectors": r.lagging_sectors,
+                "nepse_index": r.nepse_index,
+                "key_levels": r.key_levels,
+                "regime_duration_days": r.regime_duration_days,
+                "notes": r.notes,
+            }
+            for r in regimes
+        ]
+    finally:
+        db.close()
+
+
+@app.get("/api/ai/patterns")
+async def get_ai_patterns(status: str = None):
+    """Get AI-identified market patterns."""
+    from .models import AIPattern
+    db = SessionLocal()
+    try:
+        q = db.query(AIPattern).order_by(AIPattern.evidence_count.desc())
+        if status:
+            q = q.filter(AIPattern.status == status)
+        else:
+            q = q.filter(AIPattern.status.in_(["hypothesis", "emerging", "established"]))
+        patterns = q.limit(30).all()
+        return [
+            {
+                "id": p.id,
+                "pattern_name": p.pattern_name,
+                "description": p.description,
+                "category": p.category,
+                "evidence_count": p.evidence_count,
+                "confirmation_count": p.confirmation_count,
+                "last_observed": str(p.last_observed) if p.last_observed else None,
+                "last_confirmed": str(p.last_confirmed) if p.last_confirmed else None,
+                "status": p.status,
+            }
+            for p in patterns
+        ]
+    finally:
+        db.close()
+
+
+@app.get("/api/ai/observations")
+async def get_ai_observations(days: int = 7, category: str = None, symbol: str = None, limit: int = 30):
+    """Get recent AI market observations."""
+    from .models import AIMarketObservation
+    from datetime import date, timedelta
+    db = SessionLocal()
+    try:
+        cutoff = date.today() - timedelta(days=min(days, 90))
+        q = db.query(AIMarketObservation).filter(
+            AIMarketObservation.observation_date >= cutoff,
+            AIMarketObservation.still_relevant == True,
+        )
+        if category:
+            q = q.filter(AIMarketObservation.category == category)
+        if symbol:
+            q = q.filter(AIMarketObservation.symbol == symbol.upper())
+        obs = q.order_by(AIMarketObservation.created_at.desc()).limit(min(limit, 100)).all()
+        return [
+            {
+                "id": o.id,
+                "observation_date": str(o.observation_date),
+                "category": o.category,
+                "subcategory": o.subcategory,
+                "symbol": o.symbol,
+                "sector": o.sector,
+                "observation": o.observation,
+                "data_snapshot": o.data_snapshot,
+                "confidence": o.confidence,
+            }
+            for o in obs
+        ]
+    finally:
+        db.close()
+
+
+@app.get("/api/ai/memory/summaries")
+async def get_ai_memory_summaries(period_type: str = "weekly", limit: int = 8):
+    """Get AI memory summaries (weekly or monthly digests)."""
+    from .models import AIMemorySummary
+    db = SessionLocal()
+    try:
+        summaries = db.query(AIMemorySummary).filter(
+            AIMemorySummary.period_type == period_type
+        ).order_by(AIMemorySummary.period_end.desc()).limit(min(limit, 20)).all()
+        return [
+            {
+                "id": s.id,
+                "period_type": s.period_type,
+                "period_start": str(s.period_start),
+                "period_end": str(s.period_end),
+                "summary_text": s.summary_text,
+                "key_events": s.key_events,
+                "prediction_scorecard": s.prediction_scorecard,
+                "market_regime_summary": s.market_regime_summary,
+                "sector_performance": s.sector_performance,
+                "notable_stocks": s.notable_stocks,
+                "created_at": _to_npt_iso(s.created_at),
+            }
+            for s in summaries
+        ]
+    finally:
+        db.close()
+
+
 @app.post("/api/admin/run/backfill")
 async def admin_run_backfill(days: int = 365, symbols: str = None):
     """Manually trigger historical data backfill. Runs in background."""
@@ -468,21 +645,29 @@ async def post_stock_insight(symbol: str, body: dict = Body(default={})):
             db.close()
             raise HTTPException(500, "Empty response from AI")
         try:
-            row = AIInsight(
-                generated_at=datetime.now(timezone.utc),
-                insight_type=STOCK_INSIGHT,
-                insight_text=text,
-                symbol=sym,
-                extra_data={"model": settings.claude_model_fast, "options": options or {}},
+            # generate_stock_insight_text already saved the insight when db is provided
+            # Fetch the just-saved row to return full data
+            row = (
+                db.query(AIInsight)
+                .filter(AIInsight.symbol == sym, AIInsight.insight_type == STOCK_INSIGHT)
+                .order_by(AIInsight.generated_at.desc())
+                .first()
             )
-            db.add(row)
-            db.commit()
+            if row:
+                return {
+                    "insight_text": row.insight_text,
+                    "insight_type": STOCK_INSIGHT,
+                    "symbol": sym,
+                    "generated_at": _to_npt_iso(row.generated_at),
+                    "extra_data": row.extra_data,
+                }
+            # Fallback if not found (shouldn't happen)
             return {
                 "insight_text": text,
                 "insight_type": STOCK_INSIGHT,
                 "symbol": sym,
-                "generated_at": _to_npt_iso(row.generated_at),
-                "extra_data": row.extra_data,
+                "generated_at": _to_npt_iso(datetime.now(timezone.utc)),
+                "extra_data": {"model": settings.claude_model_fast},
             }
         finally:
             db.close()
@@ -743,6 +928,115 @@ async def get_symbol_floorsheet(symbol: str, limit: int = 5000, days: int = 1):
         }
 
         return {"symbol": symbol, "trades": trades, "analytics": analytics}
+    finally:
+        db.close()
+
+
+@app.get("/api/market/floorsheet-summary")
+async def get_market_floorsheet_summary(date: Optional[str] = None):
+    """Market-wide floorsheet summary for a given date (default: today).
+
+    Returns total trades/turnover, top symbols by turnover and by trade count,
+    block trade leaders, and market-wide trade size profile.
+    """
+    from sqlalchemy import text
+    from datetime import date as date_type
+    if date:
+        try:
+            target_date = date_type.fromisoformat(date)
+        except ValueError:
+            return {"error": "Invalid date format. Use YYYY-MM-DD."}
+    else:
+        target_date = datetime.now(NPT).date()
+
+    db = SessionLocal()
+    try:
+        totals = db.execute(text("""
+            SELECT COUNT(*) AS total_trades, SUM(amount) AS total_turnover, AVG(quantity) AS avg_trade_size
+            FROM floorsheet WHERE business_date = :d
+        """), {"d": target_date}).fetchone()
+
+        if not totals or not totals.total_trades:
+            return {"date": target_date.isoformat(), "totalTrades": 0, "totalTurnover": 0, "topByTurnover": [], "topByTrades": [], "blockLeaders": [], "tradeSizeProfile": []}
+
+        top_turnover = db.execute(text("""
+            SELECT symbol, SUM(amount) AS turnover, COUNT(*) AS trades,
+                   SUM(amount) / NULLIF(SUM(quantity), 0) AS vwap
+            FROM floorsheet WHERE business_date = :d
+            GROUP BY symbol ORDER BY turnover DESC LIMIT 10
+        """), {"d": target_date}).fetchall()
+
+        top_trades = db.execute(text("""
+            SELECT symbol, COUNT(*) AS trades, SUM(amount) AS turnover
+            FROM floorsheet WHERE business_date = :d
+            GROUP BY symbol ORDER BY trades DESC LIMIT 10
+        """), {"d": target_date}).fetchall()
+
+        block_leaders = db.execute(text("""
+            SELECT symbol,
+                   COUNT(*) FILTER (WHERE quantity > 5000) AS block_count,
+                   SUM(amount) FILTER (WHERE quantity > 5000) AS block_turnover,
+                   SUM(amount) AS total_turnover
+            FROM floorsheet WHERE business_date = :d
+            GROUP BY symbol
+            HAVING COUNT(*) FILTER (WHERE quantity > 5000) > 0
+            ORDER BY block_count DESC LIMIT 10
+        """), {"d": target_date}).fetchall()
+
+        size_profile = db.execute(text("""
+            SELECT
+                CASE
+                    WHEN quantity <= 100   THEN 'micro'
+                    WHEN quantity <= 500   THEN 'small'
+                    WHEN quantity <= 2000  THEN 'medium'
+                    WHEN quantity <= 5000  THEN 'large'
+                    ELSE 'block'
+                END AS bucket,
+                COUNT(*)    AS trades,
+                SUM(amount) AS turnover
+            FROM floorsheet WHERE business_date = :d
+            GROUP BY bucket ORDER BY MIN(quantity)
+        """), {"d": target_date}).fetchall()
+
+        total_turnover = totals.total_turnover or 0
+        return {
+            "date": target_date.isoformat(),
+            "totalTrades": int(totals.total_trades),
+            "totalTurnover": round(total_turnover, 2),
+            "avgTradeSize": round(totals.avg_trade_size, 0) if totals.avg_trade_size else None,
+            "topByTurnover": [
+                {
+                    "symbol": r.symbol,
+                    "turnover": round(r.turnover, 2),
+                    "trades": int(r.trades),
+                    "vwap": round(r.vwap, 2) if r.vwap else None,
+                }
+                for r in top_turnover
+            ],
+            "topByTrades": [
+                {"symbol": r.symbol, "trades": int(r.trades), "turnover": round(r.turnover, 2)}
+                for r in top_trades
+            ],
+            "blockLeaders": [
+                {
+                    "symbol": r.symbol,
+                    "blockCount": int(r.block_count),
+                    "blockTurnover": round(r.block_turnover or 0, 2),
+                    "blockPct": round((r.block_turnover or 0) / max(r.total_turnover, 1) * 100, 1),
+                }
+                for r in block_leaders
+            ],
+            "tradeSizeProfile": [
+                {
+                    "bucket": r.bucket,
+                    "trades": int(r.trades),
+                    "turnover": round(r.turnover, 2),
+                    "tradePct": round(int(r.trades) / max(totals.total_trades, 1) * 100, 1),
+                    "turnoverPct": round(r.turnover / max(total_turnover, 1) * 100, 1),
+                }
+                for r in size_profile
+            ],
+        }
     finally:
         db.close()
 
@@ -1782,7 +2076,7 @@ async def get_stock_analysis(symbol: str):
                         WHEN quantity <= 100   THEN 'micro'
                         WHEN quantity <= 500   THEN 'small'
                         WHEN quantity <= 2000  THEN 'medium'
-                        WHEN quantity <= 10000 THEN 'large'
+                        WHEN quantity <= 5000  THEN 'large'
                         ELSE 'block'
                     END AS bucket,
                     COUNT(*)   AS trades,

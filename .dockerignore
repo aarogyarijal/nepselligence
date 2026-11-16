@@ -1,0 +1,14 @@
+# Frontend bloat
+frontend/node_modules
+frontend/.next
+
+# Backend bloat
+backend/__pycache__
+backend/.venv
+
+# Dev/CI artifacts
+.git
+.env
+.playwright-mcp
+.gstack
+*.pyc

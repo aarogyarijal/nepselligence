@@ -2,11 +2,19 @@
 
 import { useEffect, useState, useMemo, memo, Fragment } from 'react'
 import { fetchFloorsheet } from '@/lib/api'
-import { formatPrice, formatNPT } from '@/lib/format'
+import { formatPrice } from '@/lib/format'
 import { TipLabel } from '@/components/Tooltip'
 import type { FloorsheetRow, FloorsheetAnalytics, AnomalyType } from '@/types/market'
 
 type Tab = 'all' | 'anomalies' | 'large'
+type Range = 1 | 3 | 7 | 14 | 30
+const RANGES: { key: Range; label: string }[] = [
+  { key: 1, label: '1D' },
+  { key: 3, label: '3D' },
+  { key: 7, label: '7D' },
+  { key: 14, label: '14D' },
+  { key: 30, label: '30D' },
+]
 
 const ANOMALY_CONFIG: Record<AnomalyType, { label: string; color: string; bg: string; dot: string; tip: string }> = {
   volumeSpike: {
@@ -163,17 +171,18 @@ function FloorsheetTimeline({ symbol }: { symbol: string }) {
   const [analytics, setAnalytics] = useState<FloorsheetAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<Tab>('all')
+  const [days, setDays] = useState<Range>(1)
 
   useEffect(() => {
     if (!symbol) return
     setLoading(true)
-    fetchFloorsheet(symbol)
+    fetchFloorsheet(symbol, 5000, days)
       .then(data => {
         setTrades(data.trades)
         setAnalytics(data.analytics)
       })
       .finally(() => setLoading(false))
-  }, [symbol])
+  }, [symbol, days])
 
   // Filter trades by tab
   const filtered = useMemo(() => {
@@ -269,6 +278,22 @@ function FloorsheetTimeline({ symbol }: { symbol: string }) {
               </button>
             ))}
           </div>
+        </div>
+        {/* Range selector */}
+        <div className="flex gap-1">
+          {RANGES.map(r => (
+            <button
+              key={r.key}
+              onClick={() => setDays(r.key)}
+              className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                days === r.key
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              {r.label}
+            </button>
+          ))}
         </div>
       </div>
 

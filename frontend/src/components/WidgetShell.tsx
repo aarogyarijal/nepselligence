@@ -10,6 +10,7 @@ interface WidgetShellProps {
   emptyMessage?: string
   onRetry?: () => void
   className?: string
+  style?: React.CSSProperties
   scrollable?: boolean
   children: ReactNode
 }
@@ -23,12 +24,14 @@ function WidgetShell({
   emptyMessage = 'No data available',
   onRetry,
   className = '',
+  style,
   scrollable = false,
   children,
 }: WidgetShellProps) {
   return (
     <div
       className={`bg-slate-900 rounded-lg border border-slate-700 p-6 flex flex-col ${className}`}
+      style={style}
       role="region"
       aria-label={title}
       aria-busy={loading}

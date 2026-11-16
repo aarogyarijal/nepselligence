@@ -1,10 +1,14 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { fetchStockInsight, generateStockInsight, chatWithStock } from '@/lib/api'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import {
+  fetchStockInsight, generateStockInsight, chatWithStock,
+  fetchAIPredictions, fetchAIObservations,
+} from '@/lib/api'
 import type {
   StockInsight, StockChatMessage,
   StockInsightOptions, InsightHorizon, InsightSignal, InsightGoal,
+  AIPrediction, AIObservation,
 } from '@/types/market'
 
 interface Props { symbol: string }
@@ -124,6 +128,14 @@ function OptionsPanel({
   )
 }
 
+const STATUS_COLORS: Record<string, string> = {
+  pending: 'bg-yellow-900/40 text-yellow-400 border-yellow-700/50',
+  confirmed: 'bg-green-900/40 text-green-400 border-green-700/50',
+  invalidated: 'bg-red-900/40 text-red-400 border-red-700/50',
+  expired: 'bg-slate-800 text-slate-500 border-slate-700',
+  partially_confirmed: 'bg-blue-900/40 text-blue-400 border-blue-700/50',
+}
+
 export default function StockAIPanel({ symbol }: Props) {
   const [insight, setInsight] = useState<StockInsight | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -135,12 +147,27 @@ export default function StockAIPanel({ symbol }: Props) {
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // Stock-specific memory
+  const [predictions, setPredictions] = useState<AIPrediction[]>([])
+  const [observations, setObservations] = useState<AIObservation[]>([])
+  const [showMemory, setShowMemory] = useState(false)
+
+  const loadMemory = useCallback(async () => {
+    const [preds, obs] = await Promise.all([
+      fetchAIPredictions({ symbol, limit: 5 }),
+      fetchAIObservations({ symbol, limit: 5 }),
+    ])
+    setPredictions(preds)
+    setObservations(obs)
+  }, [symbol])
+
   useEffect(() => {
     fetchStockInsight(symbol).then(data => { if (data) setInsight(data) })
+    loadMemory()
     setMessages([])
     setInput('')
     setError(null)
-  }, [symbol])
+  }, [symbol, loadMemory])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -203,6 +230,18 @@ export default function StockAIPanel({ symbol }: Props) {
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {(predictions.length > 0 || observations.length > 0) && (
+              <button
+                onClick={() => setShowMemory(v => !v)}
+                className={`px-2.5 py-1.5 text-xs rounded-lg border transition-colors ${
+                  showMemory
+                    ? 'bg-blue-700/80 border-blue-600 text-white'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Memory {predictions.length > 0 ? `(${predictions.length})` : ''}
+              </button>
+            )}
             <button
               onClick={() => setShowOptions(v => !v)}
               className={`px-2.5 py-1.5 text-xs rounded-lg border transition-colors ${
@@ -254,6 +293,56 @@ export default function StockAIPanel({ symbol }: Props) {
           </p>
         )}
       </div>
+
+      {/* Stock memory section */}
+      {showMemory && (predictions.length > 0 || observations.length > 0) && (
+        <div className="px-5 py-3 border-b border-slate-700/60 space-y-3 max-h-60 overflow-y-auto bg-slate-800/30">
+          {predictions.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                Tracked Predictions
+              </p>
+              <div className="space-y-1.5">
+                {predictions.map(p => (
+                  <div key={p.id} className={`px-2.5 py-2 rounded border text-xs ${STATUS_COLORS[p.status] || STATUS_COLORS.pending}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-slate-200 leading-relaxed flex-1">{p.prediction_text}</p>
+                      <span className="shrink-0 text-[10px] uppercase font-semibold tracking-wider opacity-70">
+                        {p.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                    <div className="flex gap-2 mt-1 text-[10px] text-slate-500">
+                      <span>{p.prediction_date}</span>
+                      {p.target_date && <span>Target: {p.target_date}</span>}
+                    </div>
+                    {p.resolution_text && (
+                      <p className="mt-1 text-slate-400 italic">{p.resolution_text}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {observations.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                Recent Observations
+              </p>
+              <div className="space-y-1">
+                {observations.map(o => (
+                  <div key={o.id} className="px-2.5 py-1.5 rounded bg-slate-800/50 border border-slate-700/30">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-[10px] uppercase text-slate-600">{o.category}</span>
+                      <span className="text-[10px] text-slate-600">{o.observation_date}</span>
+                    </div>
+                    <p className="text-xs text-slate-300">{o.observation}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Chat section */}
       <div className="flex flex-col flex-1 min-h-0">

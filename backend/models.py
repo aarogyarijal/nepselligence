@@ -1,7 +1,7 @@
 """Database models for NEPSE market data."""
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, BigInteger, Float, String, Text, DateTime, Date, UniqueConstraint, Index
+from sqlalchemy import Column, Integer, BigInteger, Float, String, Text, DateTime, Date, Boolean, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
 
 from .database import Base
@@ -193,4 +193,128 @@ class IntradaySectorValue(Base):
     __table_args__ = (
         UniqueConstraint("sector_name", "time", name="uq_sector_intraday"),
         Index("idx_sector_intraday_time", "sector_name", "time"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# AI Memory System
+# ---------------------------------------------------------------------------
+
+class AIMarketObservation(Base):
+    """Structured observations extracted from each AI insight generation."""
+
+    __tablename__ = "ai_market_observations"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    observation_date = Column(Date, nullable=False)
+    source_insight_id = Column(Integer, ForeignKey("ai_insights.id"), nullable=True)
+    category = Column(String(30), nullable=False)       # market_regime, sector, stock, breadth, anomaly
+    subcategory = Column(String(50))                     # momentum_shift, volume_spike, leadership_change, etc.
+    symbol = Column(String(20))                          # NULL for market-wide
+    sector = Column(String(100))
+    observation = Column(Text, nullable=False)           # 1-2 sentence human-readable fact
+    data_snapshot = Column(JSONB)                        # Key numbers at time of observation
+    confidence = Column(String(10), default="medium")    # low, medium, high
+    still_relevant = Column(Boolean, default=True)
+    expires_at = Column(Date)
+
+    __table_args__ = (
+        Index("idx_obs_date", "observation_date"),
+        Index("idx_obs_category_date", "category", "observation_date"),
+        Index("idx_obs_symbol_date", "symbol", "observation_date"),
+        Index("idx_obs_relevant_date", "still_relevant", "observation_date"),
+    )
+
+
+class AIPrediction(Base):
+    """Forward-looking statements from AI insights, tracked with outcomes."""
+
+    __tablename__ = "ai_predictions"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    source_insight_id = Column(Integer, ForeignKey("ai_insights.id"), nullable=True)
+    prediction_date = Column(Date, nullable=False)
+    target_date = Column(Date)                           # When it should resolve (NULL = open-ended)
+    category = Column(String(30), nullable=False)        # price_direction, sector_rotation, breakout, support_test
+    symbol = Column(String(20))                          # NULL for index/market-wide
+    sector = Column(String(100))
+    prediction_text = Column(Text, nullable=False)
+    conditions = Column(JSONB)                           # Measurable: {"metric": "rsi", "symbol": "NABIL", "direction": "below", "threshold": 60}
+    reference_values = Column(JSONB)                     # Values at prediction time
+    status = Column(String(20), default="pending")       # pending, confirmed, invalidated, expired, partially_confirmed
+    resolution_text = Column(Text)
+    resolved_at = Column(DateTime(timezone=True))
+    outcome_values = Column(JSONB)                       # Values at resolution
+
+    __table_args__ = (
+        Index("idx_pred_status_date", "status", "prediction_date"),
+        Index("idx_pred_symbol_status", "symbol", "status"),
+        Index("idx_pred_target", "target_date"),
+    )
+
+
+class AIPattern(Base):
+    """AI-generated hypotheses about recurring market behavior."""
+
+    __tablename__ = "ai_patterns"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    pattern_name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=False)
+    category = Column(String(30), nullable=False)        # sector_rotation, momentum, seasonal, volume, correlation
+    conditions = Column(JSONB)
+    evidence_count = Column(Integer, default=1)
+    confirmation_count = Column(Integer, default=0)
+    last_observed = Column(Date)
+    last_confirmed = Column(Date)
+    status = Column(String(15), default="hypothesis")    # hypothesis, emerging, established, invalidated
+    supporting_observations = Column(JSONB, default=[])
+
+    __table_args__ = (
+        Index("idx_patterns_status", "status"),
+        Index("idx_patterns_category", "category", "status"),
+    )
+
+
+class AIMarketRegime(Base):
+    """Daily market regime snapshot — overall market state assessment."""
+
+    __tablename__ = "ai_market_regime"
+
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False, unique=True, index=True)
+    trend = Column(String(15), nullable=False)           # bullish, bearish, sideways, transitioning
+    trend_strength = Column(String(10))                  # weak, moderate, strong
+    volatility_regime = Column(String(15))               # low, normal, elevated, extreme
+    breadth_health = Column(String(15))                  # healthy, narrowing, weak, divergent
+    leading_sectors = Column(JSONB, default=[])
+    lagging_sectors = Column(JSONB, default=[])
+    nepse_index = Column(Float)
+    key_levels = Column(JSONB)                           # {"support": 2380, "resistance": 2500, "pivot": 2440}
+    regime_duration_days = Column(Integer, default=1)
+    notes = Column(Text)
+
+
+class AIMemorySummary(Base):
+    """Compressed weekly/monthly digests of AI memory."""
+
+    __tablename__ = "ai_memory_summaries"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    period_type = Column(String(10), nullable=False)     # weekly, monthly
+    period_start = Column(Date, nullable=False)
+    period_end = Column(Date, nullable=False)
+    summary_text = Column(Text, nullable=False)
+    key_events = Column(JSONB, default=[])
+    prediction_scorecard = Column(JSONB)                 # {"total": 15, "confirmed": 9, "invalidated": 4, "expired": 2}
+    market_regime_summary = Column(JSONB)
+    sector_performance = Column(JSONB)
+    notable_stocks = Column(JSONB, default=[])
+
+    __table_args__ = (
+        UniqueConstraint("period_type", "period_start", name="uq_summary_period"),
     )

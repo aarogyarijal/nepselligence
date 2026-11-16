@@ -104,11 +104,28 @@ class IngestionScheduler:
             misfire_grace_time=600,
         )
 
-        # AI insights — daily close summary (3:15 PM NPT)
+        # Post-close sweep: capture final market state after 3 PM close.
+        # The regular market_trigger skips 3:00 PM because isOpen=="CLOSE",
+        # so this dedicated job runs at 15:02 with force=True to get closing data.
+        self.scheduler.add_job(
+            self.ingest_post_close,
+            CronTrigger(
+                hour="15", minute="2",
+                day_of_week="0-3,6",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="ingest_post_close",
+            name="Post-close final data sweep",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
+
+        # AI insights — daily close summary (3:07 PM NPT, after post-close sweep lands data)
         self.scheduler.add_job(
             self.generate_ai_insight,
             CronTrigger(
-                hour="15", minute="15",
+                hour="15", minute="7",
                 day_of_week="0-3,6",
                 timezone=settings.scheduler_timezone,
             ),
@@ -168,18 +185,114 @@ class IngestionScheduler:
             max_instances=settings.scheduler_max_instances,
         )
 
+        # Stock price intraday pruning: keep only daily-close rows after retention period
+        self.scheduler.add_job(
+            self.prune_old_intraday_prices,
+            CronTrigger(
+                day_of_week="mon",
+                hour="3", minute="0",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="prune_intraday_prices",
+            name="Prune old intraday price snapshots",
+            max_instances=1,
+        )
+
+        # Intraday sector snapshots retention: weekly on Monday at 2:30 AM NPT
+        self.scheduler.add_job(
+            self.cleanup_old_intraday_sectors,
+            CronTrigger(
+                day_of_week="mon",
+                hour="2", minute="30",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="cleanup_intraday_sectors",
+            name="Clean old intraday sector snapshots",
+            max_instances=1,
+        )
+
+        # News retention: weekly cleanup on Monday at 2:15 AM NPT
+        self.scheduler.add_job(
+            self.cleanup_old_news,
+            CronTrigger(
+                day_of_week="mon",
+                hour="2", minute="15",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="cleanup_news",
+            name="Clean old news articles",
+            max_instances=1,
+        )
+
+        # Data health check: verify today's ingestion happened (15:30 NPT)
+        self.scheduler.add_job(
+            self.check_data_health,
+            CronTrigger(
+                hour="15", minute="30",
+                day_of_week="0-3,6",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="check_data_health",
+            name="Daily data health check",
+            max_instances=1,
+        )
+
+        # AI Memory: weekly summarization (Saturday 8:00 AM NPT)
+        self.scheduler.add_job(
+            self.summarize_weekly_memory,
+            CronTrigger(
+                day_of_week="sat",
+                hour="8", minute="0",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="summarize_weekly_memory",
+            name="Summarize weekly AI memory",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        # AI Memory: monthly summarization (1st of month, 8:00 AM NPT)
+        self.scheduler.add_job(
+            self.summarize_monthly_memory,
+            CronTrigger(
+                day="1",
+                hour="8", minute="0",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="summarize_monthly_memory",
+            name="Summarize monthly AI memory",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        # AI Memory: cleanup expired memory (Monday 3:30 AM NPT)
+        self.scheduler.add_job(
+            self.cleanup_ai_memory,
+            CronTrigger(
+                day_of_week="mon",
+                hour="3", minute="30",
+                timezone=settings.scheduler_timezone,
+            ),
+            id="cleanup_ai_memory",
+            name="Clean expired AI memory",
+            max_instances=1,
+        )
+
         self.scheduler.start()
         logger.info("Scheduler started with jobs")
 
-    async def ingest_live_prices(self):
+    async def ingest_live_prices(self, force: bool = False):
         """Fetch live prices and store in DB. Max_instances=1 prevents overlap."""
         db = self.db_session_factory()
         try:
-            # CRITICAL: Guard against market closed
-            market_status = await self.provider_manager.get_market_status()
-            if market_status.get("isOpen") == "CLOSE":
-                logger.info("Market closed, aborting ingest")
-                return
+            # CRITICAL: Guard against market closed (bypass with force=True for post-close sweep)
+            if not force:
+                market_status = await self.provider_manager.get_market_status()
+                if market_status.get("isOpen") == "CLOSE":
+                    logger.info("Market closed, aborting ingest")
+                    return
 
             # Fetch live market data
             live_data = await self.provider_manager.get_live_market()
@@ -245,14 +358,15 @@ class IngestionScheduler:
         finally:
             db.close()
 
-    async def ingest_market_summary(self):
+    async def ingest_market_summary(self, force: bool = False):
         """Fetch NEPSE index + market summary and store in DB."""
         db = self.db_session_factory()
         try:
-            market_status = await self.provider_manager.get_market_status()
-            if market_status.get("isOpen") == "CLOSE":
-                logger.info("Market closed, skipping market summary ingest")
-                return
+            if not force:
+                market_status = await self.provider_manager.get_market_status()
+                if market_status.get("isOpen") == "CLOSE":
+                    logger.info("Market closed, skipping market summary ingest")
+                    return
 
             now = datetime.now(timezone.utc)
 
@@ -600,6 +714,22 @@ class IngestionScheduler:
         finally:
             db.close()
 
+    async def ingest_post_close(self):
+        """Capture final market state after close. Bypasses isOpen check."""
+        import asyncio
+        logger.info("Running post-close data sweep")
+        results = await asyncio.gather(
+            self.ingest_live_prices(force=True),
+            self.ingest_market_summary(force=True),
+            self.ingest_market_snapshot(force=True),
+            self.ingest_floorsheet(force=True),
+            return_exceptions=True,
+        )
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                logger.error(f"Post-close sweep task {i} failed: {r}")
+        logger.info("Post-close sweep complete")
+
     async def generate_ai_open_briefing(self):
         """Generate market open briefing at 11:05 AM NPT."""
         db = self.db_session_factory()
@@ -656,15 +786,16 @@ class IngestionScheduler:
         finally:
             db.close()
 
-    async def ingest_floorsheet(self):
+    async def ingest_floorsheet(self, force: bool = False):
         """Fetch full market floorsheet and store new trades (deduped by contract_id)."""
         from datetime import date as date_type
         db = self.db_session_factory()
         try:
-            market_status = await self.provider_manager.get_market_status()
-            if market_status.get("isOpen") == "CLOSE":
-                logger.info("Market closed, skipping floorsheet ingest")
-                return
+            if not force:
+                market_status = await self.provider_manager.get_market_status()
+                if market_status.get("isOpen") == "CLOSE":
+                    logger.info("Market closed, skipping floorsheet ingest")
+                    return
 
             raw = await self.provider_manager.get_floorsheet_full()
             if not raw:
@@ -718,6 +849,132 @@ class IngestionScheduler:
         except Exception as e:
             logger.error(f"Floorsheet cleanup failed: {e}")
             db.rollback()
+        finally:
+            db.close()
+
+    async def prune_old_intraday_prices(self):
+        """Keep only the last snapshot per symbol per day for dates beyond retention."""
+        db = self.db_session_factory()
+        try:
+            from sqlalchemy import text as sql_text
+            from datetime import timedelta
+            cutoff = datetime.now(timezone.utc) - timedelta(
+                days=settings.stock_price_intraday_retention_days
+            )
+            # Delete all but the latest row per (symbol, date) for old dates.
+            # DISTINCT ON is PostgreSQL-specific — keeps the last snapshot per day as closing price.
+            stmt = sql_text("""
+                DELETE FROM stock_prices
+                WHERE time < :cutoff
+                  AND id NOT IN (
+                    SELECT DISTINCT ON (symbol, time::date) id
+                    FROM stock_prices
+                    WHERE time < :cutoff
+                    ORDER BY symbol, time::date, time DESC
+                  )
+            """)
+            result = db.execute(stmt, {"cutoff": cutoff})
+            db.commit()
+            logger.info(f"Pruned {result.rowcount} old intraday price rows")
+        except Exception as e:
+            logger.error(f"Intraday price pruning failed: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
+    async def cleanup_old_intraday_sectors(self):
+        """Delete intraday sector snapshots older than retention period."""
+        db = self.db_session_factory()
+        try:
+            from sqlalchemy import delete
+            from datetime import timedelta
+            cutoff = datetime.now(timezone.utc) - timedelta(days=settings.intraday_sector_retention_days)
+            stmt = delete(IntradaySectorValue).where(IntradaySectorValue.time < cutoff)
+            result = db.execute(stmt)
+            db.commit()
+            logger.info(f"Deleted {result.rowcount} old intraday sector rows")
+        except Exception as e:
+            logger.error(f"Intraday sector cleanup failed: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
+    async def check_data_health(self):
+        """Check if we captured data today. Log critical warning if not."""
+        db = self.db_session_factory()
+        try:
+            from sqlalchemy import text as sql_text
+            from datetime import date
+            today = date.today()
+
+            price_count = db.execute(
+                sql_text("SELECT COUNT(*) FROM stock_prices WHERE time::date = :today"),
+                {"today": today}
+            ).scalar()
+
+            summary_count = db.execute(
+                sql_text("SELECT COUNT(*) FROM market_summary WHERE time::date = :today"),
+                {"today": today}
+            ).scalar()
+
+            if price_count == 0 and summary_count == 0:
+                logger.critical(
+                    f"DATA GAP DETECTED: No prices or summaries captured for {today}. "
+                    f"Market may have been open — manual recovery may be needed."
+                )
+            else:
+                logger.info(
+                    f"Data health OK for {today}: "
+                    f"{price_count} price rows, {summary_count} summary rows"
+                )
+        except Exception as e:
+            logger.error(f"Data health check failed: {e}")
+        finally:
+            db.close()
+
+    async def cleanup_old_news(self):
+        """Delete news articles older than retention period."""
+        db = self.db_session_factory()
+        try:
+            from .news import cleanup_old_news
+            count = await cleanup_old_news(db)
+            logger.info(f"News cleanup done: {count} articles deleted")
+        except Exception as e:
+            logger.error(f"News cleanup failed: {e}")
+        finally:
+            db.close()
+
+    async def summarize_weekly_memory(self):
+        """Compress the past week's AI observations into a weekly summary."""
+        db = self.db_session_factory()
+        try:
+            from .ai_memory import generate_weekly_summary
+            await generate_weekly_summary(db, self.provider_manager)
+        except Exception as e:
+            logger.error(f"Weekly memory summarization failed: {e}")
+        finally:
+            db.close()
+
+    async def summarize_monthly_memory(self):
+        """Compress weekly summaries into a monthly digest."""
+        db = self.db_session_factory()
+        try:
+            from .ai_memory import generate_monthly_summary
+            await generate_monthly_summary(db, self.provider_manager)
+        except Exception as e:
+            logger.error(f"Monthly memory summarization failed: {e}")
+        finally:
+            db.close()
+
+    async def cleanup_ai_memory(self):
+        """Expire old observations and overdue predictions."""
+        db = self.db_session_factory()
+        try:
+            from .ai_memory import cleanup_expired_memory
+            affected = cleanup_expired_memory(db)
+            logger.info(f"AI memory cleanup: {affected} rows affected")
+        except Exception as e:
+            logger.error(f"AI memory cleanup failed: {e}")
         finally:
             db.close()
 

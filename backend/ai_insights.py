@@ -13,6 +13,13 @@ from sqlalchemy import text as sql_text
 
 from .config import settings
 from .models import AIInsight, MarketSummary, DailySectorIndex, DailyMarketBreadth, NewsArticle
+from .ai_memory import (
+    parse_memory_block,
+    write_memory,
+    assemble_memory_context,
+    resolve_pending_predictions,
+    MEMORY_EXTRACTION_INSTRUCTION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -202,57 +209,68 @@ def _market_depth_instructions(depth: str) -> tuple[str, str]:
     return "under 280 words", "Be thorough and specific with numbers."
 
 
-def _build_open_prompt(ctx: dict, options: dict | None = None) -> str:
+def _build_open_prompt(ctx: dict, options: dict | None = None, memory_ctx: str = "") -> str:
     opts = options or {}
     focus_ctx = _market_focus_context(opts.get("focus", []))
     word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
     news_block = _news_section(ctx)
     market_data = _strip_news(ctx)
+    memory_block = f"\n<ai_memory>\n{memory_ctx}\n</ai_memory>\n" if memory_ctx else ""
     return f"""You are a NEPSE market analyst. The Nepal Stock Exchange (NEPSE) has just opened for trading.
+You have access to your accumulated market memory from previous analyses — use it to provide continuity and track evolving patterns.
 {f"Configuration: {focus_ctx}" if focus_ctx else ""}
+{memory_block}
 <market_data>
 {json.dumps(market_data, indent=2)}
 </market_data>
 {news_block}
 Write a morning market briefing in plain text (no markdown, no code fences) with exactly 3 sections:
 
-1. SUMMARY: One sentence on the opening context — yesterday's close, index level, and initial market tone.
-2. SIGNALS: Two to three stocks or sectors worth watching today based on recent momentum.
+1. SUMMARY: One sentence on the opening context — yesterday's close, index level, and initial market tone. Reference any relevant context from your prior observations.
+2. SIGNALS: Two to three stocks or sectors worth watching today based on recent momentum and your tracked patterns.
 3. ANOMALIES: Any pre-market observations or risks to watch (high breadth imbalance, sector weakness, relevant news events, etc.).
 
-Keep the total {word_limit}. {detail_instr} Be factual and specific. Reference any relevant recent news where it adds context."""
+Keep the total {word_limit}. {detail_instr} Be factual and specific. Reference any relevant recent news where it adds context.
+{MEMORY_EXTRACTION_INSTRUCTION}"""
 
 
-def _build_hourly_prompt(ctx: dict, options: dict | None = None) -> str:
+def _build_hourly_prompt(ctx: dict, options: dict | None = None, memory_ctx: str = "") -> str:
     opts = options or {}
     focus_ctx = _market_focus_context(opts.get("focus", []))
     word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
     news_block = _news_section(ctx)
     market_data = _strip_news(ctx)
+    memory_block = f"\n<ai_memory>\n{memory_ctx}\n</ai_memory>\n" if memory_ctx else ""
     return f"""You are a NEPSE market analyst providing a mid-session update.
+You have access to your earlier observations from today — use them to track how the session is evolving.
 {f"Configuration: {focus_ctx}" if focus_ctx else ""}
+{memory_block}
 <market_data>
 {json.dumps(market_data, indent=2)}
 </market_data>
 {news_block}
 Write a mid-session update in plain text (no markdown, no code fences) with exactly 3 sections:
 
-1. SUMMARY: One sentence on current market direction — NEPSE level, change, and intraday breadth.
+1. SUMMARY: One sentence on current market direction — NEPSE level, change, and intraday breadth. Note any shifts from your earlier observations today.
 2. SIGNALS: Two stocks showing notable intraday strength or weakness and why they stand out.
 3. ANOMALIES: Any unusual activity — sector rotation, volume spikes, breadth extremes, or news-driven moves.
 
-Keep the total {word_limit}. {detail_instr} Be specific about numbers (index level, % changes)."""
+Keep the total {word_limit}. {detail_instr} Be specific about numbers (index level, % changes).
+{MEMORY_EXTRACTION_INSTRUCTION}"""
 
 
-def _build_close_prompt(ctx: dict, day_insights: list[str], options: dict | None = None) -> str:
+def _build_close_prompt(ctx: dict, day_insights: list[str], options: dict | None = None, memory_ctx: str = "") -> str:
     opts = options or {}
     focus_ctx = _market_focus_context(opts.get("focus", []))
     word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
     news_block = _news_section(ctx)
     market_data = _strip_news(ctx)
     prior = "\n\n".join(day_insights) if day_insights else "No earlier insights today."
+    memory_block = f"\n<ai_memory>\n{memory_ctx}\n</ai_memory>\n" if memory_ctx else ""
     return f"""You are a NEPSE market analyst writing the end-of-day market summary.
+You have your accumulated market memory below — use it for continuity, to check your previous predictions, and to identify developing patterns.
 {f"Configuration: {focus_ctx}" if focus_ctx else ""}
+{memory_block}
 <market_data>
 {json.dumps(market_data, indent=2)}
 </market_data>
@@ -263,21 +281,25 @@ def _build_close_prompt(ctx: dict, day_insights: list[str], options: dict | None
 
 Write an end-of-day analysis in plain text (no markdown, no code fences) with exactly 3 sections:
 
-1. SUMMARY: Two to three sentences summarizing the full trading session — final NEPSE level, overall direction, turnover, and market breadth conclusion.
-2. SIGNALS: Three to four stocks worth monitoring tomorrow based on today's close — include price levels and reasons.
-3. ANOMALIES: Notable events from today's session — sector concentration, unusual volumes, large swings, breadth extremes, or news events that drove moves.
+1. SUMMARY: Two to three sentences summarizing the full trading session — final NEPSE level, overall direction, turnover, and market breadth conclusion. Connect to the broader trend from your memory.
+2. SIGNALS: Three to four stocks worth monitoring tomorrow based on today's close — include price levels and reasons. For any pending predictions marked CHECK in your memory, state whether they played out — reference specific numbers (e.g., "The NABIL pullback we flagged Tuesday materialized — RSI dropped from 72 to 58").
+3. ANOMALIES: Notable events from today's session — sector concentration, unusual volumes, large swings, breadth extremes, or news events that drove moves. Flag any emerging patterns.
 
-Keep the total {word_limit}. {detail_instr} Reference the earlier intraday insights where relevant. Incorporate any news headlines that explain today's price action."""
+Keep the total {word_limit}. {detail_instr} Reference the earlier intraday insights where relevant. Incorporate any news headlines that explain today's price action.
+{MEMORY_EXTRACTION_INSTRUCTION}"""
 
 
-def _build_weekly_prompt(ctx: dict, week_data: list[dict], options: dict | None = None) -> str:
+def _build_weekly_prompt(ctx: dict, week_data: list[dict], options: dict | None = None, memory_ctx: str = "") -> str:
     opts = options or {}
     focus_ctx = _market_focus_context(opts.get("focus", []))
     word_limit, detail_instr = _market_depth_instructions(opts.get("depth", "detailed"))
     news_block = _news_section(ctx)
     market_data = _strip_news(ctx)
+    memory_block = f"\n<ai_memory>\n{memory_ctx}\n</ai_memory>\n" if memory_ctx else ""
     return f"""You are a NEPSE market analyst writing the weekly market wrap.
+You have your full market memory below including past weekly summaries, prediction track record, and identified patterns. This is your deepest analysis of the week — connect the dots.
 {f"Configuration: {focus_ctx}" if focus_ctx else ""}
+{memory_block}
 <this_week_data>
 {json.dumps(week_data, indent=2)}
 </this_week_data>
@@ -288,11 +310,12 @@ def _build_weekly_prompt(ctx: dict, week_data: list[dict], options: dict | None 
 {news_block}
 Write a weekly market wrap in plain text (no markdown, no code fences) with exactly 3 sections:
 
-1. SUMMARY: Two to three sentences on the week's overall performance — net NEPSE change, high/low range, and total turnover trajectory.
-2. SIGNALS: Three stocks or sectors that defined the week — both leaders and laggards with context.
-3. ANOMALIES: Any week-level themes worth watching next week — trends, reversals, volume patterns, macro signals, or news-driven catalysts.
+1. SUMMARY: Two to three sentences on the week's overall performance — net NEPSE change, high/low range, and total turnover trajectory. Connect to the multi-week trend from your memory. Reference how the market regime has evolved.
+2. SIGNALS: Three stocks or sectors that defined the week — both leaders and laggards with context. Review your pending predictions: state which ones played out and which didn't, with specific numbers.
+3. ANOMALIES: Any week-level themes worth watching next week — trends, reversals, volume patterns, macro signals, or news-driven catalysts. Your prediction track record is included in your memory — briefly note which types of predictions are working and which aren't.
 
-Keep the total {word_limit}. {detail_instr} Be analytical, not just descriptive. Reference key news events from the week where relevant."""
+Keep the total {word_limit}. {detail_instr} Be analytical, not just descriptive. Reference key news events from the week where relevant.
+{MEMORY_EXTRACTION_INSTRUCTION}"""
 
 
 async def generate_insight(db: Session, provider_manager, insight_type: str, options: dict | None = None, force: bool = False) -> None:
@@ -323,16 +346,30 @@ async def generate_insight(db: Session, provider_manager, insight_type: str, opt
 
     opts = options or {}
 
+    # Resolve pending predictions before daily close (self-reflection pipeline)
+    if insight_type == DAILY_CLOSE:
+        try:
+            await resolve_pending_predictions(db, provider_manager)
+        except Exception as e:
+            logger.warning(f"Prediction resolution failed (non-fatal): {e}")
+
+    # Assemble memory context for this insight type
+    memory_ctx = ""
+    try:
+        memory_ctx = assemble_memory_context(db, insight_type)
+    except Exception as e:
+        logger.warning(f"Memory assembly failed (non-fatal): {e}")
+
     # Pick prompt and model based on type
     if insight_type == MARKET_OPEN:
-        prompt = _build_open_prompt(ctx, opts)
+        prompt = _build_open_prompt(ctx, opts, memory_ctx=memory_ctx)
         model = settings.claude_model_fast
     elif insight_type == HOURLY:
-        prompt = _build_hourly_prompt(ctx, opts)
+        prompt = _build_hourly_prompt(ctx, opts, memory_ctx=memory_ctx)
         model = settings.claude_model_fast
     elif insight_type == WEEKLY_WRAP:
         week_data = _gather_week_context(db)
-        prompt = _build_weekly_prompt(ctx, week_data, opts)
+        prompt = _build_weekly_prompt(ctx, week_data, opts, memory_ctx=memory_ctx)
         model = settings.claude_model_deep
     else:  # DAILY_CLOSE (default)
         today_insights = db.query(AIInsight).filter(
@@ -340,38 +377,74 @@ async def generate_insight(db: Session, provider_manager, insight_type: str, opt
             AIInsight.insight_type.in_([MARKET_OPEN, HOURLY]),
         ).order_by(AIInsight.generated_at.asc()).all()
         day_texts = [i.insight_text for i in today_insights]
-        prompt = _build_close_prompt(ctx, day_texts, opts)
+        prompt = _build_close_prompt(ctx, day_texts, opts, memory_ctx=memory_ctx)
         model = settings.claude_model_deep
+
+    # Token budget: deep models (daily_close, weekly_wrap) need more for memory extraction
+    if insight_type in (DAILY_CLOSE, WEEKLY_WRAP):
+        max_tokens = max(settings.claude_api_max_tokens, 4000)
+    else:
+        max_tokens = settings.claude_api_max_tokens
 
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=settings.claude_api_key)
         message = client.messages.create(
             model=model,
-            max_tokens=settings.claude_api_max_tokens,
+            max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
         raw_text = message.content[0].text if message.content else ""
-        insight_text = _strip_code_fences(raw_text)
+        raw_text = _strip_code_fences(raw_text)
 
-        if not insight_text:
+        if not raw_text:
             logger.warning("Claude returned empty insight, skipping")
             return
+
+        # Parse and strip memory block from the response
+        insight_text, memory_data = parse_memory_block(raw_text)
+
+        if not insight_text:
+            logger.warning("Insight text empty after memory parsing, skipping")
+            return
+
+        extra = {
+            "nepse_index": ctx.get("index", {}).get("value"),
+            "nepse_change_pct": ctx.get("index", {}).get("change_pct"),
+            "model": model,
+        }
+        if memory_data:
+            extra["memory"] = memory_data
 
         insight = AIInsight(
             generated_at=datetime.now(timezone.utc),
             insight_type=insight_type,
             insight_text=insight_text,
             symbol=None,
-            extra_data={
-                "nepse_index": ctx.get("index", {}).get("value"),
-                "nepse_change_pct": ctx.get("index", {}).get("change_pct"),
-                "model": model,
-            },
+            extra_data=extra,
         )
         db.add(insight)
+        db.flush()  # Get insight.id before commit
+
+        # Write structured memory to tables
+        if memory_data:
+            try:
+                write_memory(db, insight.id, memory_data, date.today())
+            except Exception as e:
+                logger.warning(f"Memory write failed (non-fatal): {e}")
+                db.rollback()
+                # Re-add and commit the insight without memory
+                insight_no_mem = AIInsight(
+                    generated_at=datetime.now(timezone.utc),
+                    insight_type=insight_type,
+                    insight_text=insight_text,
+                    symbol=None,
+                    extra_data=extra,
+                )
+                db.add(insight_no_mem)
+
         db.commit()
-        logger.info(f"AI insight generated: type={insight_type}, model={model}")
+        logger.info(f"AI insight generated: type={insight_type}, model={model}, memory={'yes' if memory_data else 'no'}")
 
     except ImportError:
         logger.error("anthropic package not installed. Run: pip install anthropic")
@@ -388,7 +461,7 @@ async def generate_market_insight(db: Session, provider_manager) -> None:
 STOCK_INSIGHT = "stock_insight"
 
 
-def _build_stock_insight_prompt(symbol: str, analysis: dict, options: dict | None = None, news: list | None = None) -> str:
+def _build_stock_insight_prompt(symbol: str, analysis: dict, options: dict | None = None, news: list | None = None, memory_ctx: str = "") -> str:
     """Build prompt for stock-specific one-shot analysis. options shapes horizon, signals, and goal."""
     opts = options or {}
     horizon = opts.get("horizon", "medium_term")
@@ -497,38 +570,53 @@ def _build_stock_insight_prompt(symbol: str, analysis: dict, options: dict | Non
 </recent_news>
 """
 
+    memory_block = f"\n<ai_memory>\n{memory_ctx}\n</ai_memory>\n" if memory_ctx else ""
+
     return f"""You are a NEPSE stock analyst. Provide a data-driven analysis of {symbol} ({analysis.get('name', '')}, sector: {analysis.get('sector', '')}).
+You have access to your prior observations and predictions for this stock and its sector — use them for continuity.
 
 {" ".join(config_lines)}
-
+{memory_block}
 <current_data>
 {chr(10).join(data_parts)}
 </current_data>
 {news_block}
 Write a concise analysis in plain text (no markdown, no code fences) with exactly 3 sections:
 
-1. SUMMARY: Two sentences on the stock's current {horizon.replace('_', '-')} technical position and key level to watch.
-2. SIGNALS: Two to three specific observations from the selected indicators — what they say about near-term direction given the {'current' if goal == 'neutral' else goal.replace('_', ' ')} perspective.
+1. SUMMARY: Two sentences on the stock's current {horizon.replace('_', '-')} technical position and key level to watch. Reference any prior observations if relevant.
+2. SIGNALS: Two to three specific observations from the selected indicators — what they say about near-term direction given the {'current' if goal == 'neutral' else goal.replace('_', ' ')} perspective. Check any pending predictions from your memory.
 3. ANOMALIES: Any standout observations — unusual volume, volatility, divergence, news-driven catalysts, or patterns relevant to {horizon.replace('_', ' ')} trading.
 
-Under 200 words total. Be specific with price levels and percentages. Reference any relevant news if it affects the outlook."""
+Under 200 words for the analysis sections. Be specific with price levels and percentages. Reference any relevant news if it affects the outlook.
+
+After your 3-section analysis, you MUST append a memory block in this exact format:
+
+<memory>
+{{"observations": [{{"category": "stock", "subcategory": "...", "symbol": "{symbol}", "sector": null, "text": "one-sentence observation", "confidence": "medium"}}], "predictions": [{{"category": "price_direction", "symbol": "{symbol}", "text": "prediction", "conditions": {{}}, "reference_values": {{}}, "target_days": 5}}], "regime": null, "patterns": []}}
+</memory>
+
+Include 1-2 observations and 0-1 predictions. This memory block is REQUIRED."""
 
 
-def _build_stock_system_prompt(symbol: str, analysis: dict, news: list | None = None) -> str:
+def _build_stock_system_prompt(symbol: str, analysis: dict, news: list | None = None, memory_ctx: str = "") -> str:
     """Build system message for conversational stock chat."""
     import json
     slim = {k: v for k, v in analysis.items() if k not in ("history", "overlays")}
     news_section = ""
     if news:
         news_section = f"\n\nRecent news about {symbol}:\n{json.dumps(news, indent=2)}\n"
+    memory_section = ""
+    if memory_ctx:
+        memory_section = f"\n\nYour accumulated observations and predictions for this stock:\n{memory_ctx}\n"
     return f"""You are a NEPSE stock analyst assistant. The user is analyzing {symbol} ({analysis.get('name', '')}, sector: {analysis.get('sector', '')}).
 
 You have the following current market data for this stock:
 
 {json.dumps(slim, indent=2)}
-{news_section}
+{news_section}{memory_section}
 Guidelines:
 - Answer directly and specifically using the numbers above
+- Reference your prior observations and predictions when relevant — this shows continuity
 - Under 150 words unless the question genuinely requires more detail
 - Plain text only, no markdown formatting
 - For buy/sell questions: frame in terms of technical signals and risk levels, not as personal financial advice
@@ -555,22 +643,71 @@ def _get_stock_news(db: Session, symbol: str, hours: int = 72) -> list[dict]:
 
 
 async def generate_stock_insight_text(symbol: str, analysis: dict, options: dict | None = None, db: Session | None = None) -> str:
-    """Generate a Claude insight for a specific stock. Returns raw text."""
+    """Generate a Claude insight for a specific stock. Returns raw text.
+
+    Also writes memory if a <memory> block is present in the response.
+    """
     if not settings.claude_api_key:
         raise RuntimeError("CLAUDE_API_KEY not configured")
 
     news = _get_stock_news(db, symbol) if db else []
-    prompt = _build_stock_insight_prompt(symbol, analysis, options, news=news)
+
+    # Assemble stock-specific memory context
+    memory_ctx = ""
+    if db:
+        try:
+            memory_ctx = assemble_memory_context(db, "stock_insight", symbol=symbol)
+        except Exception as e:
+            logger.warning(f"Stock memory assembly failed (non-fatal): {e}")
+
+    prompt = _build_stock_insight_prompt(symbol, analysis, options, news=news, memory_ctx=memory_ctx)
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=settings.claude_api_key)
         message = client.messages.create(
             model=settings.claude_model_fast,
-            max_tokens=600,
+            max_tokens=2000,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = message.content[0].text if message.content else ""
-        return _strip_code_fences(raw)
+        logger.info(f"Stock insight raw response: stop={message.stop_reason}, len={len(raw)}, has_memory_tag={'<memory>' in raw}")
+        raw = _strip_code_fences(raw)
+
+        # Parse and write memory
+        clean_text, memory_data = parse_memory_block(raw)
+
+        extra = {"model": settings.claude_model_fast, "options": options}
+        if memory_data:
+            extra["memory"] = memory_data
+
+        if db:
+            insight = AIInsight(
+                generated_at=datetime.now(timezone.utc),
+                insight_type=STOCK_INSIGHT,
+                insight_text=clean_text,
+                symbol=symbol,
+                extra_data=extra,
+            )
+            db.add(insight)
+            db.flush()
+            if memory_data:
+                try:
+                    write_memory(db, insight.id, memory_data, date.today())
+                except Exception as e:
+                    logger.warning(f"Stock memory write failed (non-fatal): {e}")
+                    db.rollback()
+                    # Re-add insight without memory linkage
+                    insight = AIInsight(
+                        generated_at=datetime.now(timezone.utc),
+                        insight_type=STOCK_INSIGHT,
+                        insight_text=clean_text,
+                        symbol=symbol,
+                        extra_data=extra,
+                    )
+                    db.add(insight)
+            db.commit()
+
+        return clean_text
     except ImportError:
         raise RuntimeError("anthropic package not installed")
 
@@ -581,7 +718,13 @@ async def stock_chat_turn(symbol: str, analysis: dict, messages: list[dict], db:
         raise RuntimeError("CLAUDE_API_KEY not configured")
 
     news = _get_stock_news(db, symbol) if db else []
-    system = _build_stock_system_prompt(symbol, analysis, news=news)
+    memory_ctx = ""
+    if db:
+        try:
+            memory_ctx = assemble_memory_context(db, "stock_insight", symbol=symbol)
+        except Exception:
+            pass
+    system = _build_stock_system_prompt(symbol, analysis, news=news, memory_ctx=memory_ctx)
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=settings.claude_api_key)

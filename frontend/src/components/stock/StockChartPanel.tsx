@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import CandlestickChart from '@/components/CandlestickChart'
 import LightweightAreaChart from '@/components/LightweightAreaChart'
 import { fetchStockChart } from '@/lib/api'
@@ -13,43 +13,88 @@ const RANGE_LABELS: Record<TimeRange, string> = {
   today: 'Today', last_day: 'Last Day', '5D': '5D', '1M': '1M', '3M': '3M', '6M': '6M', '1Y': '1Y',
 }
 
-interface StockChartPanelProps {
-  symbol: string
+/** Daily ranges that can be served from preloaded 1Y data */
+const DAILY_RANGES = new Set<TimeRange>(['5D', '1M', '3M', '6M', '1Y'])
+
+/** Compute the start date for a daily range relative to today */
+function dailyRangeStart(r: TimeRange): string {
+  const d = new Date()
+  switch (r) {
+    case '5D':  d.setDate(d.getDate() - 5); break
+    case '1M':  d.setMonth(d.getMonth() - 1); break
+    case '3M':  d.setMonth(d.getMonth() - 3); break
+    case '6M':  d.setMonth(d.getMonth() - 6); break
+    case '1Y':  // fall through — show all
+    default:    return ''
+  }
+  return d.toISOString().slice(0, 10)
 }
 
-export default function StockChartPanel({ symbol }: StockChartPanelProps) {
+interface StockChartPanelProps {
+  symbol: string
+  chartHeight?: number
+}
+
+export default function StockChartPanel({ symbol, chartHeight }: StockChartPanelProps) {
   const [range, setRange] = useState<TimeRange>('today')
   const [interval, setInterval] = useState<TimeInterval>('1min')
-  const [response, setResponse] = useState<StockChartResponse | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Preloaded 1Y daily data (fetched once per symbol)
+  const [dailyResponse, setDailyResponse] = useState<StockChartResponse | null>(null)
+  const [dailyLoading, setDailyLoading] = useState(true)
+  // Intraday data (fetched on demand for today/last_day)
+  const [intradayResponse, setIntradayResponse] = useState<StockChartResponse | null>(null)
+  const [intradayLoading, setIntradayLoading] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
-  const handleRangeChange = (r: TimeRange) => {
-    setRange(r)
-    const valid = VALID_INTERVALS[r]
-    if (!valid.includes(interval)) setInterval(DEFAULT_INTERVAL[r])
-  }
+  const isDailyRange = DAILY_RANGES.has(range)
 
+  // Preload 1Y daily data once per symbol
   useEffect(() => {
+    const ac = new AbortController()
+    setDailyLoading(true)
+    fetchStockChart(symbol, '1Y', '1D', ac.signal)
+      .then(data => { if (!ac.signal.aborted) setDailyResponse(data) })
+      .catch(() => { if (!ac.signal.aborted) setDailyResponse(null) })
+      .finally(() => { if (!ac.signal.aborted) setDailyLoading(false) })
+    return () => ac.abort()
+  }, [symbol])
+
+  // Fetch intraday data only for today/last_day ranges
+  useEffect(() => {
+    if (isDailyRange) return
     abortRef.current?.abort()
     const ac = new AbortController()
     abortRef.current = ac
 
-    setLoading(true)
+    setIntradayLoading(true)
     fetchStockChart(symbol, range, interval, ac.signal)
-      .then(data => {
-        if (!ac.signal.aborted) setResponse(data)
-      })
+      .then(data => { if (!ac.signal.aborted) setIntradayResponse(data) })
       .catch(e => {
         if (e instanceof DOMException && e.name === 'AbortError') return
-        if (!ac.signal.aborted) setResponse(null)
+        if (!ac.signal.aborted) setIntradayResponse(null)
       })
-      .finally(() => {
-        if (!ac.signal.aborted) setLoading(false)
-      })
+      .finally(() => { if (!ac.signal.aborted) setIntradayLoading(false) })
 
     return () => ac.abort()
-  }, [symbol, range, interval])
+  }, [symbol, range, interval, isDailyRange])
+
+  const handleRangeChange = (r: TimeRange) => {
+    setRange(r)
+    if (!DAILY_RANGES.has(r)) {
+      const valid = VALID_INTERVALS[r]
+      if (!valid.includes(interval)) setInterval(DEFAULT_INTERVAL[r])
+    }
+  }
+
+  // Active response depends on range type
+  const response = isDailyRange ? dailyResponse : intradayResponse
+  const loading = isDailyRange ? dailyLoading : intradayLoading
+
+  // For daily ranges, compute visibleFrom so the chart zooms without refetching
+  const visibleFrom = useMemo(() => {
+    if (!isDailyRange) return undefined
+    return dailyRangeStart(range) || undefined
+  }, [range, isDailyRange])
 
   // Map StockChartResponse data to OHLCVPoint[] for CandlestickChart
   const ohlcvData: OHLCVPoint[] = (response?.type === 'ohlcv' ? response.data : []).map(
@@ -91,37 +136,43 @@ export default function StockChartPanel({ symbol }: StockChartPanelProps) {
             {RANGE_LABELS[r]}
           </button>
         ))}
-        <div className="w-px h-4 bg-slate-700 mx-2" />
-        <span className="text-xs text-slate-500 mr-2 font-medium uppercase tracking-wider">Interval</span>
-        {VALID_INTERVALS[range].map(iv => (
-          <button
-            key={iv}
-            onClick={() => setInterval(iv)}
-            className={`px-3 py-1 text-xs rounded font-semibold transition-colors ${
-              interval === iv
-                ? 'bg-blue-700 text-white'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-            }`}
-          >
-            {iv}
-          </button>
-        ))}
+        {!isDailyRange && (
+          <>
+            <div className="w-px h-4 bg-slate-700 mx-2" />
+            <span className="text-xs text-slate-500 mr-2 font-medium uppercase tracking-wider">Interval</span>
+            {VALID_INTERVALS[range].map(iv => (
+              <button
+                key={iv}
+                onClick={() => setInterval(iv)}
+                className={`px-3 py-1 text-xs rounded font-semibold transition-colors ${
+                  interval === iv
+                    ? 'bg-blue-700 text-white'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                {iv}
+              </button>
+            ))}
+          </>
+        )}
       </div>
 
       {/* Chart area */}
-      {loading ? (
-        <div className="h-64 flex items-center justify-center text-slate-500 text-sm animate-pulse">
-          Loading...
-        </div>
-      ) : !response || response.data.length === 0 ? (
-        <div className="h-64 flex items-center justify-center text-slate-500 text-sm">
-          No chart data available for this range/interval
-        </div>
-      ) : response.type === 'ohlcv' ? (
-        <CandlestickChart data={ohlcvData} height={320} />
-      ) : (
-        <LightweightAreaChart data={lineData} height={320} isNegative={isNeg} />
-      )}
+      <div style={chartHeight ? { height: chartHeight } : { height: 320 }}>
+        {loading ? (
+          <div className="h-full flex items-center justify-center text-slate-500 text-sm animate-pulse">
+            Loading...
+          </div>
+        ) : !response || response.data.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+            No chart data available for this range/interval
+          </div>
+        ) : response.type === 'ohlcv' ? (
+          <CandlestickChart data={ohlcvData} visibleFrom={visibleFrom} />
+        ) : (
+          <LightweightAreaChart data={lineData} isNegative={isNeg} />
+        )}
+      </div>
     </div>
   )
 }

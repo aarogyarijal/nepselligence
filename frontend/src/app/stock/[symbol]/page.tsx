@@ -15,12 +15,15 @@ import FloorsheetTimeline from '@/components/stock/FloorsheetTimeline'
 import StockChartPanel from '@/components/stock/StockChartPanel'
 import StockAIPanel from '@/components/stock/StockAIPanel'
 import StockNewsCard from '@/components/stock/StockNewsCard'
+import ResizeHandle from '@/components/ResizeHandle'
+import { useResizableHeight } from '@/hooks/useResizableHeight'
 
 export default function StockPage() {
   const params = useParams()
   const router = useRouter()
   const symbol = (params?.symbol as string ?? '').toUpperCase()
 
+  const { height: chartHeight, handleProps: chartHandleProps } = useResizableHeight('stock-chart-height', 380)
   const [analysis, setAnalysis] = useState<StockAnalysis | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -83,7 +86,8 @@ export default function StockPage() {
         {/* Unified price chart with range + interval selectors */}
         <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Price Chart</h2>
-          <StockChartPanel symbol={symbol} />
+          <StockChartPanel symbol={symbol} chartHeight={chartHeight} />
+          <ResizeHandle onMouseDown={chartHandleProps.onMouseDown} />
         </div>
 
         {/* Row 1: News | Technicals | Signals + Returns — equal thirds, equal height */}

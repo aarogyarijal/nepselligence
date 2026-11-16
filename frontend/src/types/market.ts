@@ -226,6 +226,87 @@ export interface NewsArticle {
 
 export type NewsCategory = 'all' | 'market' | 'dividend' | 'ipo' | 'corporate' | 'policy' | 'general'
 
+// ---------------------------------------------------------------------------
+// AI Memory System types
+// ---------------------------------------------------------------------------
+
+export interface AIPrediction {
+  id: number
+  prediction_date: string
+  target_date: string | null
+  category: string
+  symbol: string | null
+  sector: string | null
+  prediction_text: string
+  conditions: Record<string, unknown> | null
+  reference_values: Record<string, unknown> | null
+  status: 'pending' | 'confirmed' | 'invalidated' | 'expired' | 'partially_confirmed'
+  resolution_text: string | null
+  resolved_at: string | null
+  outcome_values: Record<string, unknown> | null
+}
+
+export interface AIObservation {
+  id: number
+  observation_date: string
+  category: string
+  subcategory: string | null
+  symbol: string | null
+  sector: string | null
+  observation: string
+  data_snapshot: Record<string, unknown> | null
+  confidence: string
+}
+
+export interface AIMarketRegime {
+  date: string
+  trend: string
+  trend_strength: string | null
+  volatility_regime: string | null
+  breadth_health: string | null
+  leading_sectors: string[]
+  lagging_sectors: string[]
+  nepse_index: number | null
+  key_levels: Record<string, number> | null
+  regime_duration_days: number
+  notes: string | null
+}
+
+export interface AIPattern {
+  id: number
+  pattern_name: string
+  description: string
+  category: string
+  evidence_count: number
+  confirmation_count: number
+  last_observed: string | null
+  last_confirmed: string | null
+  status: string
+}
+
+export interface AIPredictionScorecard {
+  total: number
+  confirmed: number
+  partially_confirmed: number
+  invalidated: number
+  expired: number
+  hit_rate_pct: number
+}
+
+export interface AIMemorySummary {
+  id: number
+  period_type: string
+  period_start: string
+  period_end: string
+  summary_text: string
+  key_events: string[]
+  prediction_scorecard: Record<string, number> | null
+  market_regime_summary: Record<string, unknown> | null
+  sector_performance: Record<string, number> | null
+  notable_stocks: string[]
+  created_at: string
+}
+
 export interface StockAnalysis {
   symbol: string
   name: string | null

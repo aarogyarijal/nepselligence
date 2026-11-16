@@ -150,7 +150,7 @@ async def backfill_stocks(symbols: list[str], days: int):
                 logger.error(f"  {symbol}: DB insert failed — {e}")
                 db.rollback()
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         tasks = [process_symbol(client, s) for s in symbols]
         await asyncio.gather(*tasks)
 
@@ -217,7 +217,7 @@ async def main(days: int, symbols: list[str] | None):
         logger.info(f"Backfilling {len(symbols)} specified symbols over {days} days")
     else:
         logger.info("Fetching company list...")
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             companies = await fetch_company_list(client)
         symbols = [c["symbol"] for c in companies]
         logger.info(f"Found {len(symbols)} active equities — backfilling {days} days each")

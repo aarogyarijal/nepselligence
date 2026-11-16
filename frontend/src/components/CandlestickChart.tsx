@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import type { OHLCVPoint } from '@/types/market'
 import { CHART_COLORS, lwcChartOptions, CANDLE_SERIES_OPTIONS } from '@/lib/chartTheme'
-import { formatPrice, formatVolume, toNPTUnix } from '@/lib/format'
+import { formatPrice, formatVolume, toNPTUnix, NPT_OFFSET_SECONDS } from '@/lib/format'
+import { collapseSessionGaps } from '@/lib/chartUtils'
 
 export interface ChartOverlay {
   label: string
@@ -16,6 +17,8 @@ interface CandlestickChartProps {
   data: OHLCVPoint[]
   overlays?: ChartOverlay[]
   height?: number
+  /** When set, the visible range starts at this date instead of showing all data */
+  visibleFrom?: string
 }
 
 interface OHLCLegend {
@@ -44,16 +47,23 @@ function sortByTime<T extends { time: string | number }>(arr: T[]): T[] {
   })
 }
 
-export default function CandlestickChart({ data, overlays = [], height = 280 }: CandlestickChartProps) {
+
+export default function CandlestickChart({ data, overlays = [], height, visibleFrom }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<unknown>(null)
   const [legend, setLegend] = useState<OHLCLegend | null>(null)
 
+  const candleCountRef = useRef<number>(0)
+
+  // Stable references: memoize data/overlays so chart doesn't destroy/recreate on parent re-renders
+  const stableData = useMemo(() => data, [JSON.stringify(data)])
+  const stableOverlays = useMemo(() => overlays, [JSON.stringify(overlays)])
+
   useEffect(() => {
-    if (!containerRef.current || data.length === 0) return
+    if (!containerRef.current || stableData.length === 0) return
 
     // Set default legend to last candle
-    const lastD = data[data.length - 1]
+    const lastD = stableData[stableData.length - 1]
     if (lastD) {
       setLegend({
         open: lastD.open ?? lastD.close ?? 0,
@@ -71,8 +81,79 @@ export default function CandlestickChart({ data, overlays = [], height = 280 }: 
 
       if (!containerRef.current) return
 
+      const containerHeight = height ?? containerRef.current.clientHeight ?? 280
+
+      // Build raw candle data with numeric times
+      const rawCandleData = sortByTime(
+        stableData
+          .filter(d => (d.close != null || d.open != null) && d.high != null && d.low != null)
+          .map(d => {
+            const close = d.close ?? d.open!
+            const open = d.open ?? close
+            return {
+              time: toLWCTime(d.date) as number & string,
+              open,
+              high: d.high!,
+              low: d.low!,
+              close,
+            }
+          })
+      )
+
+      // Build raw volume data
+      const rawVolumeData = sortByTime(
+        stableData
+          .filter(d => d.volume != null)
+          .map(d => {
+            const close = d.close ?? d.open ?? 0
+            const open = d.open ?? close
+            return {
+              time: toLWCTime(d.date) as number & string,
+              value: d.volume!,
+              color: close >= open ? CHART_COLORS.volumeUp : CHART_COLORS.volumeDown,
+            }
+          })
+      )
+
+      // Collapse overnight/weekend gaps for intraday multi-day data
+      const gapResult = collapseSessionGaps(rawCandleData as Array<{ time: number; [k: string]: unknown }>)
+      let timeMap: Map<number, number> | null = null
+
+      let candleData = rawCandleData
+      let volumeData = rawVolumeData
+
+      if (gapResult) {
+        timeMap = gapResult.timeMap
+        candleData = gapResult.collapsed as typeof rawCandleData
+
+        // Apply same mapping to volume data
+        const volGapResult = collapseSessionGaps(rawVolumeData as Array<{ time: number; [k: string]: unknown }>)
+        if (volGapResult) {
+          volumeData = volGapResult.collapsed as typeof rawVolumeData
+        }
+      }
+
+      // Format real time from a virtual timestamp for axis labels
+      const formatRealTime = (virtualTs: number): string => {
+        const realTs = timeMap?.get(virtualTs) ?? virtualTs
+        const d = new Date((realTs - NPT_OFFSET_SECONDS) * 1000)
+        const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'Asia/Kathmandu' })
+        const day = d.toLocaleString('en-US', { day: 'numeric', timeZone: 'Asia/Kathmandu' })
+        const hour = d.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kathmandu' })
+        return `${day} ${month} ${hour}`
+      }
+
+      const chartOpts = lwcChartOptions(containerHeight)
+      if (timeMap) {
+        // Override time scale to use real-time labels on collapsed axis
+        chartOpts.timeScale = {
+          ...chartOpts.timeScale,
+          tickMarkFormatter: (time: number) => formatRealTime(time),
+        } as typeof chartOpts.timeScale
+      }
+
       chart = createChart(containerRef.current, {
-        ...lwcChartOptions(height),
+        ...chartOpts,
         layout: {
           background: { type: ColorType.Solid, color: 'transparent' },
           textColor: CHART_COLORS.text,
@@ -82,24 +163,7 @@ export default function CandlestickChart({ data, overlays = [], height = 280 }: 
       chartRef.current = chart
 
       const candleSeries = chart.addCandlestickSeries(CANDLE_SERIES_OPTIONS)
-
-      const candleData = sortByTime(
-        data
-          .filter(d => (d.close != null || d.open != null) && d.high != null && d.low != null)
-          .map(d => {
-            const close = d.close ?? d.open!
-            const open = d.open ?? close
-            return {
-              time: toLWCTime(d.date) as `${number}-${number}-${number}`,
-              open,
-              high: d.high!,
-              low: d.low!,
-              close,
-            }
-          })
-      )
-
-      candleSeries.setData(candleData)
+      candleSeries.setData(candleData as Parameters<typeof candleSeries.setData>[0])
 
       // Volume series — colored green/red matching candle direction
       const volumeSeries = chart.addHistogramSeries({
@@ -110,25 +174,10 @@ export default function CandlestickChart({ data, overlays = [], height = 280 }: 
       volumeSeries.priceScale().applyOptions({
         scaleMargins: { top: 0.8, bottom: 0 },
       })
-
-      const volumeData = sortByTime(
-        data
-          .filter(d => d.volume != null)
-          .map(d => {
-            const close = d.close ?? d.open ?? 0
-            const open = d.open ?? close
-            return {
-              time: toLWCTime(d.date) as `${number}-${number}-${number}`,
-              value: d.volume!,
-              color: close >= open ? CHART_COLORS.volumeUp : CHART_COLORS.volumeDown,
-            }
-          })
-      )
-
-      volumeSeries.setData(volumeData)
+      volumeSeries.setData(volumeData as Parameters<typeof volumeSeries.setData>[0])
 
       // Overlay line series (SMA, Bollinger, etc.)
-      for (const overlay of overlays) {
+      for (const overlay of stableOverlays) {
         const lineSeries = chart.addLineSeries({
           color: overlay.color,
           lineWidth: 1,
@@ -137,7 +186,7 @@ export default function CandlestickChart({ data, overlays = [], height = 280 }: 
           lastValueVisible: false,
           crosshairMarkerVisible: false,
         })
-        const lineData = sortByTime(
+        let lineItems = sortByTime(
           overlay.data
             .filter(d => d.value != null)
             .map(d => ({
@@ -145,7 +194,12 @@ export default function CandlestickChart({ data, overlays = [], height = 280 }: 
               value: d.value,
             }))
         )
-        lineSeries.setData(lineData)
+        // Collapse overlay gaps too if main data was collapsed
+        if (timeMap) {
+          const overlayGap = collapseSessionGaps(lineItems as unknown as Array<{ time: number; [k: string]: unknown }>)
+          if (overlayGap) lineItems = overlayGap.collapsed as unknown as typeof lineItems
+        }
+        lineSeries.setData(lineItems)
       }
 
       // OHLC legend on crosshair move
@@ -180,12 +234,30 @@ export default function CandlestickChart({ data, overlays = [], height = 280 }: 
         }
       })
 
-      chart.timeScale().fitContent()
+      candleCountRef.current = candleData.length
 
-      // Resize observer
+      // Set initial visible range
+      if (visibleFrom && candleData.length > 0) {
+        // Find the index of the first candle at or after visibleFrom
+        const fromTime = toLWCTime(visibleFrom)
+        let fromIdx = candleData.findIndex(c => {
+          if (typeof c.time === 'number' && typeof fromTime === 'number') return c.time >= fromTime
+          return String(c.time) >= String(fromTime)
+        })
+        if (fromIdx < 0) fromIdx = 0
+        chart.timeScale().setVisibleLogicalRange({ from: fromIdx, to: candleData.length - 1 })
+      } else {
+        chart.timeScale().fitContent()
+      }
+
+      // Resize observer — always track width; track height when no explicit height prop
       const ro = new ResizeObserver(entries => {
         if (entries[0] && chart) {
-          chart.applyOptions({ width: entries[0].contentRect.width })
+          const { width, height: h } = entries[0].contentRect
+          chart.applyOptions({
+            width,
+            ...(height == null ? { height: h } : {}),
+          })
         }
       })
       ro.observe(containerRef.current)
@@ -202,12 +274,39 @@ export default function CandlestickChart({ data, overlays = [], height = 280 }: 
     return () => {
       cleanup?.()
     }
-  }, [data, overlays, height])
+  }, [stableData, stableOverlays, height])
+
+  // Adjust visible range when visibleFrom changes (without recreating chart)
+  useEffect(() => {
+    const chart = chartRef.current as { timeScale(): { setVisibleLogicalRange(r: { from: number; to: number }): void; fitContent(): void } } | null
+    if (!chart || candleCountRef.current === 0) return
+
+    if (visibleFrom) {
+      // Re-derive candle data to find index — use the same sorted data approach
+      const sorted = stableData
+        .filter(d => (d.close != null || d.open != null) && d.high != null && d.low != null)
+        .map(d => ({ time: toLWCTime(d.date) }))
+        .sort((a, b) => {
+          if (typeof a.time === 'number' && typeof b.time === 'number') return a.time - b.time
+          return String(a.time).localeCompare(String(b.time))
+        })
+
+      const fromTime = toLWCTime(visibleFrom)
+      let fromIdx = sorted.findIndex(c => {
+        if (typeof c.time === 'number' && typeof fromTime === 'number') return c.time >= fromTime
+        return String(c.time) >= String(fromTime)
+      })
+      if (fromIdx < 0) fromIdx = 0
+      chart.timeScale().setVisibleLogicalRange({ from: fromIdx, to: sorted.length - 1 })
+    } else {
+      chart.timeScale().fitContent()
+    }
+  }, [visibleFrom, stableData])
 
   const legendColor = legend && legend.close >= legend.open ? CHART_COLORS.up : CHART_COLORS.down
 
   return (
-    <div className="relative">
+    <div className={`relative ${height == null ? 'h-full' : ''}`}>
       {legend && (
         <div className="absolute top-1 left-1 z-10 flex gap-3 text-xs font-mono pointer-events-none">
           <span className="text-slate-500">O <span className="text-slate-300">{formatPrice(legend.open)}</span></span>
@@ -219,7 +318,11 @@ export default function CandlestickChart({ data, overlays = [], height = 280 }: 
           )}
         </div>
       )}
-      <div ref={containerRef} />
+      <div
+        ref={containerRef}
+        style={height != null ? { height } : undefined}
+        className={height == null ? 'w-full h-full' : 'w-full'}
+      />
     </div>
   )
 }

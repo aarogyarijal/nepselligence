@@ -14,6 +14,8 @@ import AIPanel from '@/components/AIPanel'
 import AdminControls from '@/components/AdminControls'
 import NewsFeed from '@/components/NewsFeed'
 import WidgetShell from '@/components/WidgetShell'
+import ResizeHandle from '@/components/ResizeHandle'
+import { useResizableHeight } from '@/hooks/useResizableHeight'
 import FloorsheetModal from '@/components/FloorsheetModal'
 import TradeActivity from '@/components/TradeActivity'
 import { fetchMarketOverview } from '@/lib/api'
@@ -40,6 +42,7 @@ export default function Dashboard() {
   const [activeRange, setActiveRange] = useState<TimeRange>('today')
   const [activeInterval, setActiveInterval] = useState<TimeInterval>('1min')
   const [floorsheetSymbol, setFloorsheetSymbol] = useState<string | null>(null)
+  const { height: chartHeight, handleProps: chartHandleProps } = useResizableHeight('nepse-chart-height', 320)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
 
   const loadMarketStatus = async () => {
@@ -98,40 +101,43 @@ export default function Dashboard() {
                 {RANGE_LABELS[r]}
               </button>
             ))}
-            <div className="w-px h-4 bg-slate-700 mx-2" />
-            <span className="text-xs text-slate-500 mr-2 font-medium uppercase tracking-wider">Interval</span>
-            {VALID_INTERVALS[range].map(iv => (
-              <button
-                key={iv}
-                onClick={() => setInterval(iv)}
-                className={`px-3 py-1 text-xs rounded font-semibold transition-colors ${
-                  interval === iv
-                    ? 'bg-blue-700 text-white'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                {iv}
-              </button>
-            ))}
+            {!['5D', '1M', '3M', '6M', '1Y'].includes(range) && (
+              <>
+                <div className="w-px h-4 bg-slate-700 mx-2" />
+                <span className="text-xs text-slate-500 mr-2 font-medium uppercase tracking-wider">Interval</span>
+                {VALID_INTERVALS[range].map(iv => (
+                  <button
+                    key={iv}
+                    onClick={() => setInterval(iv)}
+                    className={`px-3 py-1 text-xs rounded font-semibold transition-colors ${
+                      interval === iv
+                        ? 'bg-blue-700 text-white'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    {iv}
+                  </button>
+                ))}
+              </>
+            )}
           </div>
         </div>
 
         <main className="flex-1 p-6 max-w-[1600px] mx-auto w-full">
           {/* ROW 1: NEPSE Index Chart + Sector Performance */}
-          <div className="grid grid-cols-12 gap-6 mb-6">
+          <div className="grid grid-cols-12 gap-6 mb-6" style={{ gridTemplateRows: `${chartHeight}px` }}>
             <div className="col-span-8">
-              <WidgetShell title="NEPSE Index" className="h-80">
-                <div className="h-56">
-                  <IndexChart isOpen={isOpen} range={activeRange} interval={activeInterval} />
-                </div>
+              <WidgetShell title="NEPSE Index" className="h-full">
+                <IndexChart isOpen={isOpen} range={activeRange} interval={activeInterval} />
               </WidgetShell>
             </div>
             <div className="col-span-4">
-              <WidgetShell title="Sector Performance" className="h-80">
+              <WidgetShell title="Sector Performance" className="h-full" scrollable>
                 <SectorPerformance isOpen={isOpen} range={activeRange} interval={activeInterval} />
               </WidgetShell>
             </div>
           </div>
+          <ResizeHandle onMouseDown={chartHandleProps.onMouseDown} />
 
           {/* ROW 2: Top Gainers + Top Losers + Turnover Leaders */}
           <div className="grid grid-cols-12 gap-6 mb-6">

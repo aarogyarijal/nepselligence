@@ -1,0 +1,15 @@
+# Secrets and local overrides
+.env
+compose.override.yaml
+
+# Tooling / OS noise
+.DS_Store
+.gstack/
+.playwright-mcp/
+*.tsbuildinfo
+
+# Dependencies and build output
+node_modules/
+.next/
+__pycache__/
+.venv/

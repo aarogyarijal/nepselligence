@@ -21,6 +21,12 @@ import type {
   StockInsightOptions,
   MarketInsightOptions,
   NewsArticle,
+  AIPrediction,
+  AIObservation,
+  AIMarketRegime,
+  AIPattern,
+  AIPredictionScorecard,
+  AIMemorySummary,
 } from '@/types/market'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
@@ -242,4 +248,70 @@ export async function chatWithStock(
   if (!res.ok) throw new Error(`Chat failed: ${res.status}`)
   const data = await res.json()
   return data.response ?? ''
+}
+
+// ---------------------------------------------------------------------------
+// AI Memory endpoints
+// ---------------------------------------------------------------------------
+
+export async function fetchAIPredictions(params?: {
+  status?: string
+  symbol?: string
+  limit?: number
+}): Promise<AIPrediction[]> {
+  const p = new URLSearchParams()
+  if (params?.status) p.set('status', params.status)
+  if (params?.symbol) p.set('symbol', params.symbol)
+  if (params?.limit) p.set('limit', String(params.limit))
+  const qs = p.toString()
+  const res = await fetch(`${API_URL}/api/ai/predictions${qs ? `?${qs}` : ''}`, { mode: 'cors' })
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function fetchAIScorecard(days = 30): Promise<AIPredictionScorecard | null> {
+  const res = await fetch(`${API_URL}/api/ai/scorecard?days=${days}`, { mode: 'cors' })
+  if (!res.ok) return null
+  return res.json()
+}
+
+export async function fetchAIRegimeHistory(days = 30): Promise<AIMarketRegime[]> {
+  const res = await fetch(`${API_URL}/api/ai/regime/history?days=${days}`, { mode: 'cors' })
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function fetchAIPatterns(status?: string): Promise<AIPattern[]> {
+  const url = status
+    ? `${API_URL}/api/ai/patterns?status=${status}`
+    : `${API_URL}/api/ai/patterns`
+  const res = await fetch(url, { mode: 'cors' })
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function fetchAIObservations(params?: {
+  days?: number
+  category?: string
+  symbol?: string
+  limit?: number
+}): Promise<AIObservation[]> {
+  const p = new URLSearchParams()
+  if (params?.days) p.set('days', String(params.days))
+  if (params?.category) p.set('category', params.category)
+  if (params?.symbol) p.set('symbol', params.symbol)
+  if (params?.limit) p.set('limit', String(params.limit))
+  const qs = p.toString()
+  const res = await fetch(`${API_URL}/api/ai/observations${qs ? `?${qs}` : ''}`, { mode: 'cors' })
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function fetchAIMemorySummaries(periodType = 'weekly', limit = 8): Promise<AIMemorySummary[]> {
+  const res = await fetch(
+    `${API_URL}/api/ai/memory/summaries?period_type=${periodType}&limit=${limit}`,
+    { mode: 'cors' }
+  )
+  if (!res.ok) return []
+  return res.json()
 }
