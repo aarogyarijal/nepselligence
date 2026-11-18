@@ -13,3 +13,6 @@ node_modules/
 .next/
 __pycache__/
 .venv/
+
+# Ad-hoc browser screenshots dropped in the repo root
+/*.png
