@@ -20,6 +20,17 @@ const BUCKET_COLORS: Record<string, string> = {
   block:  'bg-amber-500',
 }
 
+/** This card always covers one trading day, whatever range is selected: "Today" or that day's date */
+function dayLabel(date: string | null | undefined): string | undefined {
+  if (!date) return undefined
+  const day = date.slice(0, 10)
+  const todayNPT = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kathmandu' })
+  if (day === todayNPT) return 'Today'
+  const d = new Date(`${day}T00:00:00Z`)
+  if (isNaN(d.getTime())) return undefined
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+}
+
 const BUCKET_ORDER = ['micro', 'small', 'medium', 'large', 'block']
 
 type ActiveView = 'turnover' | 'trades' | 'blocks'
@@ -62,7 +73,7 @@ export default function TradeActivity() {
     }))
 
   return (
-    <WidgetShell title="Trade Activity">
+    <WidgetShell title="Trade Activity" period={dayLabel(data.date)}>
       <div className="space-y-3">
         {/* Summary line */}
         <div className="flex items-center justify-between text-xs text-slate-500">
