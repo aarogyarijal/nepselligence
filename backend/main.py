@@ -1271,15 +1271,15 @@ async def get_market_overview():
         return cached
 
     # DB fallback: latest market summary row.
-    # Determine isOpen by checking NEPSE trading hours (10:45 AM – 3:00 PM NPT, Sun–Thu).
+    # Determine isOpen by checking NEPSE trading hours (10:45 AM – 3:00 PM NPT, Mon–Fri).
     # NPT is UTC+5:45.
     from datetime import time as dtime
     now_npt = datetime.now(NPT)
-    weekday = now_npt.weekday()  # Mon=0 … Sun=6; NEPSE trades Sun(6)–Thu(3)
+    weekday = now_npt.weekday()  # Mon=0 … Sun=6
     t = now_npt.time()
     market_open_time  = dtime(10, 45)
     market_close_time = dtime(15, 0)
-    is_trading_day = weekday in (6, 0, 1, 2, 3)  # Sun, Mon, Tue, Wed, Thu
+    is_trading_day = weekday < 5  # Mon–Fri
     is_open = is_trading_day and market_open_time <= t <= market_close_time
 
     db = SessionLocal()

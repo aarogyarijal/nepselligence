@@ -509,7 +509,11 @@ def grade_prediction(db: Session, pred: AIPrediction) -> dict | None:
         return None
     end_value, end_time = end
 
+    # The starting level only counts if it is recent; across a data gap the
+    # baseline is unknown rather than measured from a stale price.
     start = _level_before(db, condition["symbol"], made_at)
+    if start and start[1] < made_at - timedelta(days=5):
+        start = None
     result = grade(condition, start[0] if start else None, end_value)
     if result is None:
         return None
@@ -625,11 +629,11 @@ async def generate_weekly_summary(db: Session, provider_manager=None) -> None:
         return
 
     today = date.today()
-    # Find the week to summarize (previous full week)
-    # Go back to last Sunday as period_end, previous Sunday as period_start
-    days_since_sunday = (today.weekday() + 1) % 7
-    period_end = today - timedelta(days=days_since_sunday)
-    period_start = period_end - timedelta(days=6)
+    # Summarize the most recent Monday-Sunday week whose Friday session is over.
+    # Run on Saturday, that is the trading week that just ended.
+    last_friday = today - timedelta(days=(today.weekday() - 4) % 7)
+    period_start = last_friday - timedelta(days=4)
+    period_end = period_start + timedelta(days=6)
 
     # Check if already summarized
     existing = db.query(AIMemorySummary).filter(

@@ -20,6 +20,9 @@ from .providers import DataProviderManager
 logger = logging.getLogger(__name__)
 
 
+# APScheduler day_of_week for NEPSE trading days.
+TRADING_DAYS = "mon-fri"
+
 class IngestionScheduler:
     """Manages scheduled NEPSE data ingestion jobs."""
 
@@ -32,12 +35,12 @@ class IngestionScheduler:
         """Start the scheduler with all jobs."""
         logger.info("Starting scheduler...")
 
-        # NEPSE market days: Sun-Thu (Nepal trades Sun through Thu)
+        # NEPSE trades Monday to Friday (it moved off Sunday-Thursday in April 2026).
         # Market hours: 11 AM - 3 PM NPT — fires every 10 minutes (matches NepseAPI 10-min cache TTL)
         market_trigger = CronTrigger(
             hour="11-15",
             minute="*/10",
-            day_of_week="0-3,6",  # Mon-Thu (0-3) + Sun (6) = NEPSE trading days
+            day_of_week=TRADING_DAYS,
             timezone=settings.scheduler_timezone,
         )
 
@@ -79,7 +82,7 @@ class IngestionScheduler:
             self.generate_ai_open_briefing,
             CronTrigger(
                 hour="11", minute="5",
-                day_of_week="0-3,6",
+                day_of_week=TRADING_DAYS,
                 timezone=settings.scheduler_timezone,
             ),
             id="generate_ai_open",
@@ -94,7 +97,7 @@ class IngestionScheduler:
             self.generate_ai_hourly,
             CronTrigger(
                 hour="12-14", minute="15",
-                day_of_week="0-3,6",
+                day_of_week=TRADING_DAYS,
                 timezone=settings.scheduler_timezone,
             ),
             id="generate_ai_hourly",
@@ -111,7 +114,7 @@ class IngestionScheduler:
             self.ingest_post_close,
             CronTrigger(
                 hour="15", minute="2",
-                day_of_week="0-3,6",
+                day_of_week=TRADING_DAYS,
                 timezone=settings.scheduler_timezone,
             ),
             id="ingest_post_close",
@@ -126,7 +129,7 @@ class IngestionScheduler:
             self.generate_ai_insight,
             CronTrigger(
                 hour="15", minute="7",
-                day_of_week="0-3,6",
+                day_of_week=TRADING_DAYS,
                 timezone=settings.scheduler_timezone,
             ),
             id="generate_ai_insight",
@@ -136,11 +139,11 @@ class IngestionScheduler:
             misfire_grace_time=600,
         )
 
-        # AI insights — weekly wrap (Thursday 3:30 PM NPT = day_of_week=3)
+        # AI insights — weekly wrap (Friday 3:30 PM NPT, after the last session of the week)
         self.scheduler.add_job(
             self.generate_ai_weekly,
             CronTrigger(
-                day_of_week="3", hour="15", minute="30",
+                day_of_week="fri", hour="15", minute="30",
                 timezone=settings.scheduler_timezone,
             ),
             id="generate_ai_weekly",
@@ -229,7 +232,7 @@ class IngestionScheduler:
             self.check_data_health,
             CronTrigger(
                 hour="15", minute="30",
-                day_of_week="0-3,6",
+                day_of_week=TRADING_DAYS,
                 timezone=settings.scheduler_timezone,
             ),
             id="check_data_health",
@@ -764,7 +767,7 @@ class IngestionScheduler:
             db.close()
 
     async def generate_ai_weekly(self):
-        """Generate weekly wrap on Thursday at 3:30 PM NPT."""
+        """Generate weekly wrap on Friday at 3:30 PM NPT."""
         db = self.db_session_factory()
         try:
             from .ai_insights import generate_insight, WEEKLY_WRAP
