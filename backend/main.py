@@ -869,7 +869,7 @@ async def get_symbol_floorsheet(symbol: str, limit: int = 5000, days: int = 1):
     try:
         # Fetch all trades for the period
         rows = db.execute(text("""
-            SELECT contract_no, symbol, buyer, seller, quantity, rate, time
+            SELECT contract_id, symbol, quantity, rate, time
             FROM floorsheet
             WHERE symbol = :sym AND time >= :cutoff
             ORDER BY time DESC
@@ -908,10 +908,11 @@ async def get_symbol_floorsheet(symbol: str, limit: int = 5000, days: int = 1):
             if rate_stddev > 0 and abs(r.rate - vwap) > price_threshold:
                 anomalies.append("priceDeviation")
             trades.append({
-                "contractNo": r.contract_no,
+                "contractNo": r.contract_id,
                 "symbol": r.symbol,
-                "buyer": r.buyer or "—",
-                "seller": r.seller or "—",
+                # Broker identity is not stored (NepseAPI always returns it null)
+                "buyer": "—",
+                "seller": "—",
                 "quantity": r.quantity,
                 "rate": r.rate,
                 "amount": round(amount, 2),
