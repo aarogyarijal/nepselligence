@@ -1,4 +1,4 @@
-"""News ingestion from RSS feeds for NEPSE market intelligence."""
+"""News ingestion (ShareSansar listing pages + OnlineKhabar RSS) for NEPSE market intelligence."""
 
 import logging
 import re
@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .config import settings
 from .models import NewsArticle
+from .news_parsing import parse_sharesansar_listing
 
 logger = logging.getLogger(__name__)
 
@@ -80,16 +81,39 @@ def _parse_rss_date(entry) -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def fetch_sharesansar_rss() -> list[dict]:
-    """Fetch and parse ShareSansar RSS feed. Returns list of normalized article dicts."""
-    url = settings.news_rss_sharesansar
+async def _get_text(url: str) -> str:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        response = await client.get(url, headers={"User-Agent": "NepselligenceBot/1.0"})
+        response.raise_for_status()
+        return response.text
+
+
+async def fetch_sharesansar() -> list[dict]:
+    """Scrape ShareSansar's listing pages (it has no RSS feed any more)."""
+    now = datetime.now(timezone.utc)
+    by_guid: dict[str, dict] = {}
+    for url in settings.news_sharesansar_pages:
+        try:
+            page = await _get_text(url)
+        except Exception as e:
+            logger.error(f"Failed to fetch ShareSansar page {url}: {e}")
+            continue
+        found = parse_sharesansar_listing(page, now)
+        if not found:
+            logger.error(f"No articles parsed from {url}: ShareSansar's markup may have changed")
+        for art in found:
+            by_guid.setdefault(art["guid"], art)
+
+    logger.info(f"Fetched {len(by_guid)} articles from ShareSansar")
+    return list(by_guid.values())
+
+
+async def fetch_rss(url: str, source: str) -> list[dict]:
+    """Fetch and parse an RSS feed. Returns list of normalized article dicts."""
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-            response = await client.get(url, headers={"User-Agent": "NepselligenceBot/1.0"})
-            response.raise_for_status()
-            raw_xml = response.text
+        raw_xml = await _get_text(url)
     except Exception as e:
-        logger.error(f"Failed to fetch ShareSansar RSS: {e}")
+        logger.error(f"Failed to fetch {source} RSS: {e}")
         return []
 
     feed = feedparser.parse(raw_xml)
@@ -115,11 +139,13 @@ async def fetch_sharesansar_rss() -> list[dict]:
             "title": title,
             "link": link,
             "summary": summary,
-            "source": "sharesansar",
+            "source": source,
             "published_at": _parse_rss_date(entry),
         })
 
-    logger.info(f"Fetched {len(articles)} articles from ShareSansar RSS")
+    if not articles:
+        logger.error(f"{source} RSS at {url} returned no articles")
+    logger.info(f"Fetched {len(articles)} articles from {source} RSS")
     return articles
 
 
@@ -135,7 +161,8 @@ async def ingest_news(db: Session) -> int:
 
     Returns the number of new articles inserted.
     """
-    articles = await fetch_sharesansar_rss()
+    articles = await fetch_sharesansar()
+    articles += await fetch_rss(settings.news_rss_onlinekhabar, "onlinekhabar")
     if not articles:
         return 0
 

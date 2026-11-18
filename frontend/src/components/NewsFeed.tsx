@@ -24,6 +24,14 @@ const CATEGORY_COLORS: Record<string, string> = {
   general: 'text-slate-400 bg-slate-800',
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  sharesansar: 'ShareSansar',
+  onlinekhabar: 'OnlineKhabar',
+}
+
+// Both sources publish daily, so a newest article older than this means ingestion broke.
+const STALE_AFTER_MS = 48 * 60 * 60_000
+
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
   const mins = Math.floor(diff / 60_000)
@@ -49,7 +57,9 @@ function NewsItem({ article, onSymbolClick }: NewsItemProps) {
             <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${categoryClass}`}>
               {article.category}
             </span>
-            <span className="text-xs text-slate-600">{timeAgo(article.published_at)}</span>
+            <span className="text-xs text-slate-600">
+              {SOURCE_LABELS[article.source] ?? article.source} · {timeAgo(article.published_at)}
+            </span>
             {article.symbols.slice(0, 3).map(sym => (
               <button
                 key={sym}
@@ -101,6 +111,12 @@ export default function NewsFeed() {
 
   usePolling(load, 5 * 60_000, true)
 
+  // Only the unfiltered list says anything about ingestion; a quiet category is normal.
+  const stale =
+    category === 'all' &&
+    articles.length > 0 &&
+    Date.now() - new Date(articles[0].published_at).getTime() > STALE_AFTER_MS
+
   const handleSymbolClick = (sym: string) => {
     router.push(`/stock/${sym}`)
   }
@@ -111,7 +127,12 @@ export default function NewsFeed() {
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-white">Market News</h2>
-          <span className="text-xs px-1.5 py-0.5 bg-slate-700 text-slate-400 rounded">ShareSansar</span>
+          <span className="text-xs px-1.5 py-0.5 bg-slate-700 text-slate-400 rounded">ShareSansar · OnlineKhabar</span>
+          {stale && (
+            <span className="text-xs px-1.5 py-0.5 bg-amber-900/40 text-amber-400 rounded">
+              Feed stale · newest {timeAgo(articles[0].published_at)}
+            </span>
+          )}
         </div>
         {/* Category filter tabs */}
         <div className="flex gap-1">

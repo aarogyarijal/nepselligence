@@ -35,8 +35,14 @@ class Settings(BaseSettings):
     ai_memory_regime_retention_days: int = 90
     ai_memory_weekly_summary_retention_weeks: int = 12
 
-    # News RSS feeds
-    news_rss_sharesansar: str = "https://www.sharesansar.com/rss"
+    # News sources. ShareSansar dropped its RSS feed in April 2026, so its
+    # listing pages are scraped instead.
+    news_sharesansar_pages: list[str] = [
+        "https://www.sharesansar.com/category/latest",
+        "https://www.sharesansar.com/category/ipo-fpo-news",
+        "https://www.sharesansar.com/category/proposed-dividend",
+    ]
+    news_rss_onlinekhabar: str = "https://english.onlinekhabar.com/category/economy/feed"
     news_retention_days: int = 90
 
     # Server
