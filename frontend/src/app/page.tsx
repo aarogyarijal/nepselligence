@@ -125,50 +125,52 @@ export default function Dashboard() {
 
         <main className="flex-1 p-6 max-w-[1600px] mx-auto w-full">
           {/* ROW 1: NEPSE Index Chart + Sector Performance */}
-          <div className="grid grid-cols-12 gap-6 mb-6" style={{ gridTemplateRows: `${chartHeight}px` }}>
-            <div className="col-span-8">
+          {/* Stacked on portrait tablets (the handle sits under the chart it resizes), side by side from lg */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6" style={{ gridTemplateRows: `${chartHeight}px` }}>
+            <div className="lg:col-span-7 xl:col-span-8 min-w-0">
               <WidgetShell title="NEPSE Index" className="h-full">
                 <IndexChart isOpen={isOpen} range={activeRange} interval={activeInterval} />
               </WidgetShell>
             </div>
-            <div className="col-span-4">
-              <WidgetShell title="Sector Performance" className="h-full" scrollable>
+            <ResizeHandle handleProps={chartHandleProps} className="-my-6 lg:hidden" />
+            <div className="lg:col-span-5 xl:col-span-4 min-w-0">
+              <WidgetShell title="Sector Performance" className="h-80 lg:h-full" scrollable>
                 <SectorPerformance isOpen={isOpen} range={activeRange} interval={activeInterval} />
               </WidgetShell>
             </div>
           </div>
-          <ResizeHandle onMouseDown={chartHandleProps.onMouseDown} />
+          <ResizeHandle handleProps={chartHandleProps} className="-mt-6 hidden lg:flex" />
 
           {/* ROW 2: Top Gainers + Top Losers + Turnover Leaders */}
-          <div className="grid grid-cols-12 gap-6 mb-6">
-            <div className="col-span-3">
+          <div className="grid grid-cols-2 xl:grid-cols-12 gap-6 mb-6">
+            <div className="xl:col-span-3 min-w-0">
               <WidgetShell title="Top Gainers" className="h-[32rem]" scrollable>
                 <TopGainers isOpen={isOpen} range={activeRange} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
-            <div className="col-span-3">
+            <div className="xl:col-span-3 min-w-0">
               <WidgetShell title="Top Losers" className="h-[32rem]" scrollable>
                 <TopLosers isOpen={isOpen} range={activeRange} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
-            <div className="col-span-6">
-              <WidgetShell title="Turnover Leaders" className="h-[32rem]">
+            <div className="col-span-2 xl:col-span-6 min-w-0">
+              <WidgetShell title="Turnover Leaders" className="h-96 xl:h-[32rem]">
                 <TurnoverLeaders isOpen={isOpen} range={activeRange} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
           </div>
 
           {/* ROW 3: Market Breadth + Trade Activity + AI Insights */}
-          <div className="grid grid-cols-12 gap-6 mb-6">
-            <div className="col-span-3">
-              <WidgetShell title="Market Breadth" className="h-96">
+          <div className="grid grid-cols-2 xl:grid-cols-12 gap-6 mb-6">
+            <div className="xl:col-span-3 min-w-0">
+              <WidgetShell title="Market Breadth" className="h-full xl:h-96">
                 <MarketBreadthWidget isOpen={isOpen} range={activeRange} />
               </WidgetShell>
             </div>
-            <div className="col-span-3">
+            <div className="xl:col-span-3 min-w-0">
               <TradeActivity />
             </div>
-            <div className="col-span-6">
+            <div className="col-span-2 xl:col-span-6 min-w-0">
               <div className="h-96">
                 <AIPanel isOpen={isOpen} />
               </div>

@@ -124,8 +124,8 @@ export default function NewsFeed() {
   return (
     <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-x-4 gap-y-2 px-4 py-3 border-b border-slate-700">
+        <div className="flex items-center gap-2 flex-wrap">
           <h2 className="text-sm font-semibold text-white">Market News</h2>
           <span className="text-xs px-1.5 py-0.5 bg-slate-700 text-slate-400 rounded">ShareSansar · OnlineKhabar</span>
           {stale && (
@@ -135,7 +135,7 @@ export default function NewsFeed() {
           )}
         </div>
         {/* Category filter tabs */}
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           {CATEGORIES.map(cat => (
             <button
               key={cat.value}

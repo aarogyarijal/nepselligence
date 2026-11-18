@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 
 const TOOLTIP_WIDTH = 280
@@ -16,6 +16,8 @@ export function Tooltip({ content, children, placement = 'top' }: TooltipProps) 
   const [visible, setVisible] = useState(false)
   const [coords, setCoords] = useState({ x: 0, y: 0 })
   const triggerRef = useRef<HTMLSpanElement>(null)
+  // True when the last press came from a finger or pen, which has no hover to rely on
+  const touchRef = useRef(false)
 
   const show = () => {
     if (!triggerRef.current) return
@@ -36,12 +38,29 @@ export function Tooltip({ content, children, placement = 'top' }: TooltipProps) 
 
   const hide = () => setVisible(false)
 
+  // While open, a tap anywhere else or any scroll closes it (it is position: fixed)
+  useEffect(() => {
+    if (!visible) return
+    const onDown = (e: PointerEvent) => {
+      if (!triggerRef.current?.contains(e.target as Node)) setVisible(false)
+    }
+    const onScroll = () => setVisible(false)
+    document.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [visible])
+
   return (
     <>
       <span
         ref={triggerRef}
-        onMouseEnter={show}
-        onMouseLeave={hide}
+        onPointerEnter={e => { if (e.pointerType === 'mouse') show() }}
+        onPointerLeave={e => { if (e.pointerType === 'mouse') hide() }}
+        onPointerDown={e => { touchRef.current = e.pointerType !== 'mouse' }}
+        onClick={() => { if (touchRef.current) (visible ? hide() : show()) }}
         onFocus={show}
         onBlur={hide}
         className="inline-flex items-center"

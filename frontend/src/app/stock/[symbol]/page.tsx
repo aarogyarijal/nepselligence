@@ -72,7 +72,7 @@ export default function StockPage() {
       <div className="border-b border-slate-800 bg-slate-950 px-6 py-3 flex items-center justify-between">
         <button
           onClick={() => router.push('/')}
-          className="text-slate-400 hover:text-white text-sm transition-colors flex items-center gap-1"
+          className="text-slate-400 hover:text-white text-sm transition-colors flex items-center gap-1 touch:pr-4"
         >
           ← Dashboard
         </button>
@@ -87,28 +87,30 @@ export default function StockPage() {
         <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Price Chart</h2>
           <StockChartPanel symbol={symbol} chartHeight={chartHeight} />
-          <ResizeHandle onMouseDown={chartHandleProps.onMouseDown} />
+          <ResizeHandle handleProps={chartHandleProps} className="-mb-4" />
         </div>
 
         {/* Row 1: News | Technicals | Signals + Returns — equal thirds, equal height */}
-        <div className="grid grid-cols-3 gap-6 items-stretch">
-          <div className="flex flex-col">
+        <div className="grid grid-cols-2 xl:grid-cols-3 gap-6 items-stretch">
+          <div className="flex flex-col col-span-2 xl:col-span-1 max-h-96 xl:max-h-none min-w-0">
             <StockNewsCard symbol={symbol} />
           </div>
-          <div className="flex flex-col">
+          <div className="flex flex-col min-w-0">
             <TechnicalsCard technicals={analysis.technicals} />
           </div>
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-6 min-w-0">
             <SignalsCard signals={analysis.signals} />
             <ReturnsCard returns={analysis.returns} />
           </div>
         </div>
 
         {/* Row 2: Volume + Volatility + RelPerf */}
-        <div className="grid grid-cols-3 gap-6">
+        <div className="grid grid-cols-2 xl:grid-cols-3 gap-6">
           <VolumeCard volume={analysis.volume} />
           <VolatilityCard volatility={analysis.volatility} />
-          <RelPerfCard relativePerformance={analysis.relativePerformance} />
+          <div className="col-span-2 xl:col-span-1 min-w-0">
+            <RelPerfCard relativePerformance={analysis.relativePerformance} />
+          </div>
         </div>
 
         {/* Row 3: AI Analysis + Chat */}

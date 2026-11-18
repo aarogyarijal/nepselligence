@@ -26,6 +26,8 @@ export function lwcChartOptions(height: number) {
       horzLines: { color: CHART_COLORS.grid },
     },
     crosshair: { mode: 0 },
+    // A vertical finger drag scrolls the page instead of being swallowed by the chart
+    handleScroll: { vertTouchDrag: false },
     rightPriceScale: { borderColor: CHART_COLORS.border },
     timeScale: { borderColor: CHART_COLORS.border, timeVisible: true },
     height,

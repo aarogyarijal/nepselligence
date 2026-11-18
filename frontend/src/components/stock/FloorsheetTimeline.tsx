@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, memo, Fragment } from 'react'
 import { fetchFloorsheet } from '@/lib/api'
 import { formatPrice } from '@/lib/format'
-import { TipLabel } from '@/components/Tooltip'
+import { TipLabel, Tooltip } from '@/components/Tooltip'
 import type { FloorsheetRow, FloorsheetAnalytics, AnomalyType } from '@/types/market'
 
 type Tab = 'all' | 'anomalies' | 'large'
@@ -129,14 +129,14 @@ function AnomalyBadges({ anomalies }: { anomalies: AnomalyType[] }) {
       {anomalies.map(a => {
         const cfg = ANOMALY_CONFIG[a]
         return (
-          <span
-            key={a}
-            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium ${cfg.color} bg-slate-800`}
-            title={cfg.tip}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-            {cfg.label}
-          </span>
+          <Tooltip key={a} content={cfg.tip}>
+            <span
+              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium cursor-help ${cfg.color} bg-slate-800`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+              {cfg.label}
+            </span>
+          </Tooltip>
         )
       })}
     </span>
@@ -181,6 +181,7 @@ function FloorsheetTimeline({ symbol }: { symbol: string }) {
         setTrades(data.trades)
         setAnalytics(data.analytics)
       })
+      .catch(() => {})  // keep whatever is showing rather than an unhandled rejection
       .finally(() => setLoading(false))
   }, [symbol, days])
 

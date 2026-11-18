@@ -53,6 +53,8 @@ export default function FloorsheetModal({ symbol, onClose }: FloorsheetModalProp
       const data = await fetchFloorsheet(sym, 300)
       setTrades(data.trades)
       setAnalytics(data.analytics)
+    } catch {
+      // Leave the empty state showing rather than an unhandled rejection
     } finally {
       setLoading(false)
     }
@@ -69,15 +71,23 @@ export default function FloorsheetModal({ symbol, onClose }: FloorsheetModalProp
     return () => window.removeEventListener('keydown', onKey)
   }, [symbol, onClose])
 
+  // Keep the page behind from scrolling while the modal is open
+  useEffect(() => {
+    if (!symbol) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [symbol])
+
   if (!symbol) return null
 
   const modal = (
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
       onClick={e => { if (e.target === backdropRef.current) onClose() }}
     >
-      <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-2xl w-[760px] max-h-[80vh] flex flex-col">
+      <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-2xl w-[760px] max-w-full max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700 shrink-0">
           <div className="flex items-center gap-3">
@@ -93,7 +103,7 @@ export default function FloorsheetModal({ symbol, onClose }: FloorsheetModalProp
             </button>
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-white transition-colors text-xl leading-none"
+              className="text-slate-400 hover:text-white transition-colors text-xl leading-none px-2 -mr-2"
               aria-label="Close"
             >
               ×
@@ -105,7 +115,7 @@ export default function FloorsheetModal({ symbol, onClose }: FloorsheetModalProp
         {analytics && !loading && <AnalyticsBar analytics={analytics} />}
 
         {/* Table */}
-        <div className="overflow-y-auto flex-1">
+        <div className="overflow-y-auto overscroll-contain flex-1">
           {loading ? (
             <div className="flex items-center justify-center h-40 text-slate-400 text-sm animate-pulse">
               Loading trades…

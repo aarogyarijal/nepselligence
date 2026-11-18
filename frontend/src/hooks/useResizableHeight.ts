@@ -2,9 +2,19 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 
+const MIN_HEIGHT = 200
+const MAX_HEIGHT = 800
+const KEY_STEP = 16
+
+const clamp = (h: number) => Math.round(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, h)))
+
+export interface ResizeHandleBindings {
+  onPointerDown: (e: React.PointerEvent<HTMLElement>) => void
+  onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => void
+}
+
 export function useResizableHeight(storageKey: string, defaultHeight: number) {
   const [height, setHeight] = useState(defaultHeight)
-  const dragRef = useRef<{ startY: number; startH: number } | null>(null)
   const rafRef = useRef<number>(0)
 
   // Hydrate from localStorage on mount
@@ -12,43 +22,56 @@ export function useResizableHeight(storageKey: string, defaultHeight: number) {
     const stored = localStorage.getItem(storageKey)
     if (stored) {
       const parsed = parseInt(stored, 10)
-      if (!isNaN(parsed) && parsed >= 200 && parsed <= 800) setHeight(parsed)
+      if (!isNaN(parsed) && parsed >= MIN_HEIGHT && parsed <= MAX_HEIGHT) setHeight(parsed)
     }
   }, [storageKey])
 
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
+  // Pointer events cover mouse, finger and pen with one code path
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
     e.preventDefault()
-    dragRef.current = { startY: e.clientY, startH: height }
+    const el = e.currentTarget
+    const pointerId = e.pointerId
+    const startY = e.clientY
+    const startH = height
+    let latest = startH
+
+    el.setPointerCapture(pointerId)
     document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
 
-    const onMouseMove = (ev: MouseEvent) => {
-      if (!dragRef.current) return
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      latest = clamp(startH + ev.clientY - startY)
       cancelAnimationFrame(rafRef.current)
-      rafRef.current = requestAnimationFrame(() => {
-        const delta = ev.clientY - dragRef.current!.startY
-        const next = Math.min(800, Math.max(200, dragRef.current!.startH + delta))
-        setHeight(next)
-      })
+      rafRef.current = requestAnimationFrame(() => setHeight(latest))
     }
 
-    const onMouseUp = () => {
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
+    const onEnd = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onEnd)
+      el.removeEventListener('pointercancel', onEnd)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       cancelAnimationFrame(rafRef.current)
-      // Persist final height
-      setHeight(h => {
-        localStorage.setItem(storageKey, String(h))
-        return h
-      })
-      dragRef.current = null
+      setHeight(latest)
+      localStorage.setItem(storageKey, String(latest))
     }
 
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onEnd)
+    el.addEventListener('pointercancel', onEnd)
   }, [height, storageKey])
 
-  return { height, handleProps: { onMouseDown } }
+  const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+    e.preventDefault()
+    const next = clamp(height + (e.key === 'ArrowDown' ? KEY_STEP : -KEY_STEP))
+    setHeight(next)
+    localStorage.setItem(storageKey, String(next))
+  }, [height, storageKey])
+
+  const handleProps: ResizeHandleBindings = { onPointerDown, onKeyDown }
+  return { height, handleProps }
 }

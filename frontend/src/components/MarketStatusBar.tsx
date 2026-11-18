@@ -143,9 +143,9 @@ export default function MarketStatusBar({ onSymbolSearch, isOpen }: MarketStatus
               ) : done[key] ? `✓ ${label}` : label}
             </button>
             {/* Tooltip */}
-            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-slate-300 whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+            <div className="absolute top-full right-0 mt-1.5 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-slate-300 whitespace-nowrap hidden group-hover:block pointer-events-none z-50 shadow-lg">
               {desc}
-              <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 border-l border-t border-slate-600 rotate-45" />
+              <div className="absolute -top-1 right-6 w-2 h-2 bg-slate-800 border-l border-t border-slate-600 rotate-45" />
             </div>
           </div>
         ))}
@@ -165,7 +165,12 @@ export default function MarketStatusBar({ onSymbolSearch, isOpen }: MarketStatus
           }}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
           placeholder="Search symbol..."
-          className="bg-slate-800 border border-slate-600 text-slate-200 text-xs rounded px-3 py-1.5 w-48 focus:outline-none focus:border-slate-400"
+          enterKeyHint="search"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+          className="bg-slate-800 border border-slate-600 text-slate-200 text-xs rounded px-3 py-1.5 touch:py-2 w-48 focus:outline-none focus:border-slate-400"
           aria-label="Search stock symbol"
           aria-autocomplete="list"
         />

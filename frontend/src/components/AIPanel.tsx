@@ -14,6 +14,7 @@ import {
 import { useFreshness } from '@/hooks/useFreshness'
 import { usePolling } from '@/hooks/usePolling'
 import { formatNPT } from '@/lib/format'
+import { TipLabel } from '@/components/Tooltip'
 import type {
   AIInsight,
   InsightType,
@@ -241,12 +242,14 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
             <span className="ml-auto text-xs text-slate-500">
               Pred: {scorecard.hit_rate_pct.toFixed(0)}% hit ({scorecard.confirmed}/{scorecard.total})
               {scorecard.edge_pct != null && (
-                <span
-                  className={scorecard.edge_pct > 0 ? 'text-green-400' : 'text-slate-500'}
-                  title={`A forecaster assuming nothing changes scored ${scorecard.baseline_hit_rate_pct?.toFixed(0)}% on the same predictions`}
-                >
-                  {' '}{scorecard.edge_pct > 0 ? '+' : ''}{scorecard.edge_pct.toFixed(0)} vs baseline
-                </span>
+                <>
+                  {' '}
+                  <TipLabel
+                    label={`${scorecard.edge_pct > 0 ? '+' : ''}${scorecard.edge_pct.toFixed(0)} vs baseline`}
+                    tip={`A forecaster assuming nothing changes scored ${scorecard.baseline_hit_rate_pct?.toFixed(0)}% on the same predictions`}
+                    className={scorecard.edge_pct > 0 ? 'text-green-400' : 'text-slate-500'}
+                  />
+                </>
               )}
             </span>
           )}
@@ -548,10 +551,11 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed mb-2">{p.description}</p>
                 <div className="flex items-center gap-3 text-[10px] text-slate-600">
-                  <span title="Times the AI reported seeing this pattern">Seen: {p.evidence_count}</span>
-                  <span title="Predictions based on this pattern that were graded, and how many came true when a no-change forecast would have missed">
-                    {p.test_count ? `Tests: ${p.confirmation_count}/${p.test_count} right` : 'Untested'}
-                  </span>
+                  <TipLabel label={`Seen: ${p.evidence_count}`} tip="Times the AI reported seeing this pattern" />
+                  <TipLabel
+                    label={p.test_count ? `Tests: ${p.confirmation_count}/${p.test_count} right` : 'Untested'}
+                    tip="Predictions based on this pattern that were graded, and how many came true when a no-change forecast would have missed"
+                  />
                   <span>{p.category.replace('_', ' ')}</span>
                   {p.last_observed && <span>Last seen: {p.last_observed}</span>}
                 </div>
