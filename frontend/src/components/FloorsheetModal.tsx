@@ -128,7 +128,7 @@ export default function FloorsheetModal({ symbol, onClose }: FloorsheetModalProp
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-slate-800 text-slate-400">
                 <tr>
-                  <th className="px-4 py-2 text-left font-medium">Time</th>
+                  <th className="px-4 py-2 text-left font-medium">Time (NPT)</th>
                   <th className="px-4 py-2 text-left font-medium">Buyer</th>
                   <th className="px-4 py-2 text-left font-medium">Seller</th>
                   <th className="px-4 py-2 text-right font-medium">Qty</th>
@@ -144,7 +144,7 @@ export default function FloorsheetModal({ symbol, onClose }: FloorsheetModalProp
                       key={row.contractNo}
                       className={`transition-colors ${hasAnomaly ? 'bg-amber-500/5 hover:bg-amber-500/10' : 'hover:bg-slate-800/50'}`}
                     >
-                      <td className="px-4 py-1.5 text-slate-500">{formatNPT(row.time)}</td>
+                      <td className="px-4 py-1.5 text-slate-500">{formatNPT(row.time, false)}</td>
                       <td className="px-4 py-1.5 text-green-400 font-medium">{row.buyer}</td>
                       <td className="px-4 py-1.5 text-red-400 font-medium">{row.seller}</td>
                       <td className={`px-4 py-1.5 text-right tabular-nums ${hasAnomaly ? 'text-amber-400 font-semibold' : 'text-slate-300'}`}>

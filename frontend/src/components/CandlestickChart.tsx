@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import type { OHLCVPoint } from '@/types/market'
 import { CHART_COLORS, lwcChartOptions, CANDLE_SERIES_OPTIONS } from '@/lib/chartTheme'
-import { formatPrice, formatVolume, toNPTUnix, NPT_OFFSET_SECONDS } from '@/lib/format'
+import { formatPrice, formatVolume } from '@/lib/format'
+import { toNPTUnix, isDailyTime } from '@/lib/nptTime'
 import { collapseSessionGaps } from '@/lib/chartUtils'
 
 export interface ChartOverlay {
@@ -30,14 +31,12 @@ interface OHLCLegend {
 }
 
 /** Convert a date/time string to the format lightweight-charts expects:
- *  - ISO strings with 'T' → UTC timestamp (seconds)
- *  - Plain date strings (YYYY-MM-DD) → business day string
+ *  - timestamps → NPT-shifted Unix seconds
+ *  - daily points (YYYY-MM-DD) → business day string
  */
 function toLWCTime(dateStr: string): string | number {
-  if (dateStr.includes('T')) {
-    return toNPTUnix(dateStr)
-  }
-  return dateStr.slice(0, 10)
+  if (isDailyTime(dateStr)) return dateStr.slice(0, 10)
+  return toNPTUnix(dateStr)
 }
 
 function sortByTime<T extends { time: string | number }>(arr: T[]): T[] {
@@ -133,24 +132,9 @@ export default function CandlestickChart({ data, overlays = [], height, visibleF
         }
       }
 
-      // Format real time from a virtual timestamp for axis labels
-      const formatRealTime = (virtualTs: number): string => {
-        const realTs = timeMap?.get(virtualTs) ?? virtualTs
-        const d = new Date((realTs - NPT_OFFSET_SECONDS) * 1000)
-        const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'Asia/Kathmandu' })
-        const day = d.toLocaleString('en-US', { day: 'numeric', timeZone: 'Asia/Kathmandu' })
-        const hour = d.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kathmandu' })
-        return `${day} ${month} ${hour}`
-      }
-
-      const chartOpts = lwcChartOptions(containerHeight)
-      if (timeMap) {
-        // Override time scale to use real-time labels on collapsed axis
-        chartOpts.timeScale = {
-          ...chartOpts.timeScale,
-          tickMarkFormatter: (time: number) => formatRealTime(time),
-        } as typeof chartOpts.timeScale
-      }
+      // On a collapsed axis, labels come from the real time behind each virtual one
+      const realTimes = timeMap
+      const chartOpts = lwcChartOptions(containerHeight, realTimes ? t => realTimes.get(t) ?? t : undefined)
 
       chart = createChart(containerRef.current, {
         ...chartOpts,

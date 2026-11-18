@@ -429,7 +429,7 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
 
           {insight && (
             <div className="mt-3 pt-2 border-t border-slate-700 text-xs text-slate-600 shrink-0">
-              {formatNPT(insight.generated_at)} NPT
+              {formatNPT(insight.generated_at)}
               {insight.insight_type && ` · ${INSIGHT_TYPE_LABELS[insight.insight_type] ?? insight.insight_type}`}
             </div>
           )}

@@ -1,5 +1,7 @@
 // Shared chart theme for lightweight-charts and recharts components
 
+import { chartTimeFormatters } from './nptTime'
+
 export const CHART_COLORS = {
   up: '#16a34a',
   down: '#dc2626',
@@ -14,8 +16,13 @@ export const CHART_COLORS = {
   volumeDown: 'rgba(220, 38, 38, 0.35)',
 } as const
 
-/** lightweight-charts ChartOptions partial (typed loosely to avoid importing at module scope) */
-export function lwcChartOptions(height: number) {
+/**
+ * lightweight-charts ChartOptions partial (typed loosely to avoid importing at module scope).
+ * `realTime` maps a collapsed-axis timestamp back to the real one, when session gaps were collapsed.
+ */
+export function lwcChartOptions(height: number, realTime?: (t: number) => number) {
+  // Labels are always NPT, whatever the viewer's timezone
+  const { tickMarkFormatter, timeFormatter } = chartTimeFormatters(realTime)
   return {
     layout: {
       background: { type: 'solid' as const, color: CHART_COLORS.bg },
@@ -29,7 +36,8 @@ export function lwcChartOptions(height: number) {
     // A vertical finger drag scrolls the page instead of being swallowed by the chart
     handleScroll: { vertTouchDrag: false },
     rightPriceScale: { borderColor: CHART_COLORS.border },
-    timeScale: { borderColor: CHART_COLORS.border, timeVisible: true },
+    timeScale: { borderColor: CHART_COLORS.border, timeVisible: true, tickMarkFormatter },
+    localization: { timeFormatter },
     height,
   }
 }

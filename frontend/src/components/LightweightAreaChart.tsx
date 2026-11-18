@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useMemo } from 'react'
 import { CHART_COLORS, lwcChartOptions, areaSeriesOptions } from '@/lib/chartTheme'
-import { toNPTUnix, NPT_OFFSET_SECONDS } from '@/lib/format'
+import { toNPTUnix, isDailyTime } from '@/lib/nptTime'
 import { collapseSessionGaps } from '@/lib/chartUtils'
 
 interface LightweightAreaChartProps {
@@ -36,8 +36,8 @@ export default function LightweightAreaChart({
 
       const containerHeight = height ?? containerRef.current.clientHeight ?? 200
 
-      // Determine time format: ISO with 'T' → UTC seconds, otherwise business day string
-      const isIntraday = stableData.some(d => d.time.includes('T'))
+      // Timestamps → NPT-shifted seconds; daily points → business day string
+      const isIntraday = stableData.some(d => !isDailyTime(d.time))
 
       let chartData = stableData
         .map(d => {
@@ -66,22 +66,9 @@ export default function LightweightAreaChart({
         }
       }
 
-      const formatRealTime = (virtualTs: number): string => {
-        const realTs = timeMap?.get(virtualTs) ?? virtualTs
-        const d = new Date((realTs - NPT_OFFSET_SECONDS) * 1000)
-        const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'Asia/Kathmandu' })
-        const day = d.toLocaleString('en-US', { day: 'numeric', timeZone: 'Asia/Kathmandu' })
-        const hour = d.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kathmandu' })
-        return `${day} ${month} ${hour}`
-      }
-
-      const chartOpts = lwcChartOptions(containerHeight)
-      if (timeMap) {
-        chartOpts.timeScale = {
-          ...chartOpts.timeScale,
-          tickMarkFormatter: (time: number) => formatRealTime(time),
-        } as typeof chartOpts.timeScale
-      }
+      // On a collapsed axis, labels come from the real time behind each virtual one
+      const realTimes = timeMap
+      const chartOpts = lwcChartOptions(containerHeight, realTimes ? t => realTimes.get(t) ?? t : undefined)
 
       chart = createChart(containerRef.current, {
         ...chartOpts,
@@ -160,7 +147,7 @@ export default function LightweightAreaChart({
     if (!chart || pointCountRef.current === 0) return
 
     if (visibleFrom) {
-      const isIntraday = stableData.some(d => d.time.includes('T'))
+      const isIntraday = stableData.some(d => !isDailyTime(d.time))
       const sorted = stableData
         .map(d => ({ time: isIntraday ? toNPTUnix(d.time) : d.time.slice(0, 10) }))
         .sort((a, b) => {
