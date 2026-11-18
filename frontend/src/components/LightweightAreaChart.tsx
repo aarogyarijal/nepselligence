@@ -137,14 +137,19 @@ export default function LightweightAreaChart({
 
       return () => {
         ro.disconnect()
+        // Drop the ref first: touching a removed chart throws "Object is disposed" on its next paint
+        if (chartRef.current === chart) chartRef.current = null
         chart.remove()
       }
     }
 
     let cleanup: (() => void) | undefined
-    init().then(fn => { cleanup = fn })
+    let cancelled = false
+    // If the effect was torn down while init was still loading, dispose the chart as soon as it exists
+    init().then(fn => { if (cancelled) fn?.(); else cleanup = fn })
 
     return () => {
+      cancelled = true
       cleanup?.()
     }
   }, [stableData, height, isNegative])
