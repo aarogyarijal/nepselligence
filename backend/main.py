@@ -5,9 +5,8 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
-import zoneinfo
 
-NPT = zoneinfo.ZoneInfo("Asia/Kathmandu")
+from .timeutil import NPT, npt_today, npt_date, to_npt_iso, npt_bucket_start, bucket_label, parse_npt_time
 from typing import Optional
 
 from fastapi import FastAPI, Query, Body, HTTPException
@@ -28,9 +27,7 @@ logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
 
-def _to_npt_iso(dt: datetime) -> str:
-    """Convert a datetime to NPT ISO string."""
-    return dt.astimezone(NPT).isoformat()
+_to_npt_iso = to_npt_iso
 
 # Global scheduler instance
 scheduler: IngestionScheduler = None
@@ -54,8 +51,7 @@ def _aggregate_timeseries(rows_iter, interval_minutes: int) -> list:
     for t, val in rows_iter:
         if val is None:
             continue
-        epoch = int(t.timestamp())
-        bucket = (epoch // (interval_minutes * 60)) * (interval_minutes * 60)
+        bucket = npt_bucket_start(int(t.timestamp()), interval_minutes)
         buckets[bucket] = (t, float(val))
 
     if not buckets:
@@ -67,7 +63,7 @@ def _aggregate_timeseries(rows_iter, interval_minutes: int) -> list:
         change = round(val - first_val, 2)
         change_pct = round((change / first_val) * 100, 2) if first_val else 0.0
         result.append({
-            "time": datetime.fromtimestamp(epoch, tz=NPT).isoformat(),
+            "time": bucket_label(epoch, interval_minutes),
             "value": val,
             "change": change,
             "changePct": change_pct,
@@ -82,8 +78,7 @@ def _aggregate_ohlcv(rows_iter, interval_minutes: int) -> list:
     for t, ltp, vol in rows_iter:
         if not ltp or ltp <= 0:
             continue
-        epoch = int(t.timestamp())
-        bucket = (epoch // (interval_minutes * 60)) * (interval_minutes * 60)
+        bucket = npt_bucket_start(int(t.timestamp()), interval_minutes)
         buckets[bucket].append((t, float(ltp), vol or 0))
     result = []
     for bucket_epoch in sorted(buckets.keys()):
@@ -91,7 +86,7 @@ def _aggregate_ohlcv(rows_iter, interval_minutes: int) -> list:
         vals = [v for _, v, _ in ticks]
         vols = [vol for _, _, vol in ticks]
         result.append({
-            "time": datetime.fromtimestamp(bucket_epoch, tz=NPT).isoformat(),
+            "time": bucket_label(bucket_epoch, interval_minutes),
             "open": vals[0],
             "high": max(vals),
             "low": min(vals),
@@ -212,7 +207,7 @@ async def get_latest_prices():
                 "ltp": p.ltp,
                 "change": p.change,
                 "changePercent": p.change_percent,
-                "time": p.time,
+                "time": to_npt_iso(p.time),
             }
             for p in prices
         ]
@@ -297,7 +292,7 @@ async def get_index_history(
 
         # For 1D interval: prefer historical depth. Use real data only if we have
         # enough calendar days; otherwise fall back to the backfill daily proxy.
-        distinct_days = len({r.time.date() for r in rows})
+        distinct_days = len({npt_date(r.time) for r in rows})
         if rows and (distinct_days >= min_real_days[range] or eff_interval != "1D"):
             rows_iter = ((r.time, r.nepse_index) for r in rows)
             return _aggregate_timeseries(rows_iter, int_min)
@@ -338,7 +333,9 @@ async def get_index_history(
             change = round(value - prev_value, 2) if prev_value is not None else 0.0
             change_pct = round((change / prev_value) * 100, 2) if prev_value else 0.0
             points.append({
-                "time": day.isoformat(),
+                # A plain date: a midnight timestamp with no offset would be read
+                # in each viewer's own timezone.
+                "time": day.date().isoformat(),
                 "value": value,
                 "change": change,
                 "changePct": change_pct,
@@ -452,7 +449,7 @@ async def get_ai_regime_history(days: int = 30):
     from datetime import date, timedelta
     db = SessionLocal()
     try:
-        cutoff = date.today() - timedelta(days=min(days, 365))
+        cutoff = npt_today() - timedelta(days=min(days, 365))
         regimes = db.query(AIMarketRegime).filter(
             AIMarketRegime.date >= cutoff
         ).order_by(AIMarketRegime.date.desc()).all()
@@ -514,7 +511,7 @@ async def get_ai_observations(days: int = 7, category: str = None, symbol: str =
     from datetime import date, timedelta
     db = SessionLocal()
     try:
-        cutoff = date.today() - timedelta(days=min(days, 90))
+        cutoff = npt_today() - timedelta(days=min(days, 90))
         q = db.query(AIMarketObservation).filter(
             AIMarketObservation.observation_date >= cutoff,
             AIMarketObservation.still_relevant == True,
@@ -835,7 +832,7 @@ async def admin_run_ingest_floorsheet():
                 "quantity": int(item.get("contractQuantity") or 0),
                 "rate": float(item.get("contractRate") or 0),
                 "amount": float(item.get("contractAmount") or 0),
-                "time": item.get("tradeTime"),
+                "time": parse_npt_time(item.get("tradeTime")),
                 "business_date": item.get("businessDate"),
                 "security_name": item.get("securityName"),
             })
@@ -916,7 +913,7 @@ async def get_symbol_floorsheet(symbol: str, limit: int = 5000, days: int = 1):
                 "quantity": r.quantity,
                 "rate": r.rate,
                 "amount": round(amount, 2),
-                "time": r.time,
+                "time": to_npt_iso(r.time),
                 "anomalies": anomalies,
             })
 

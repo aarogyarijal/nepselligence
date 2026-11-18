@@ -10,6 +10,7 @@ import type {
   StockInsightOptions, InsightHorizon, InsightSignal, InsightGoal,
   AIPrediction, AIObservation,
 } from '@/types/market'
+import { formatNPT } from '@/lib/nptTime'
 
 interface Props { symbol: string }
 
@@ -39,15 +40,6 @@ const GOALS: { value: InsightGoal; label: string; color: string }[] = [
   { value: 'exit',    label: 'Exit / TP',    color: 'text-yellow-400' },
   { value: 'risk',    label: 'Risk',         color: 'text-red-400' },
 ]
-
-function formatNPT(iso: string): string {
-  return new Date(iso).toLocaleString('en-IN', {
-    timeZone: 'Asia/Kathmandu',
-    day: 'numeric', month: 'short',
-    hour: '2-digit', minute: '2-digit',
-    hour12: false,
-  })
-}
 
 function OptionsPanel({
   opts, onChange,
@@ -225,7 +217,7 @@ export default function StockAIPanel({ symbol }: Props) {
                 {goalLabel && goalLabel !== 'Balanced' && (
                   <span className="text-xs px-2 py-0.5 bg-slate-700/60 text-slate-400 rounded">{goalLabel}</span>
                 )}
-                <span className="text-xs text-slate-600">{formatNPT(insight.generated_at)} NPT</span>
+                <span className="text-xs text-slate-600">{formatNPT(insight.generated_at)}</span>
               </>
             )}
           </div>

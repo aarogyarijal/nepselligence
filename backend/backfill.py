@@ -16,6 +16,8 @@ import argparse
 import logging
 from datetime import datetime, timezone, date, timedelta
 
+from .timeutil import npt_today
+
 import httpx
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -93,7 +95,7 @@ def date_to_utc(d: date) -> datetime:
 
 async def backfill_stocks(symbols: list[str], days: int):
     """Fetch and insert daily price history for given symbols."""
-    cutoff = date.today() - timedelta(days=days)
+    cutoff = npt_today() - timedelta(days=days)
     db = SessionLocal()
 
     semaphore = asyncio.Semaphore(CONCURRENCY)

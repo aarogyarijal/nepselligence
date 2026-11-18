@@ -1,6 +1,8 @@
 """Database models for NEPSE market data."""
 
 from datetime import datetime
+
+from .timeutil import utc_now
 from sqlalchemy import Column, Integer, BigInteger, Float, String, Text, DateTime, Date, Boolean, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -206,7 +208,7 @@ class AIMarketObservation(Base):
     __tablename__ = "ai_market_observations"
 
     id = Column(Integer, primary_key=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     observation_date = Column(Date, nullable=False)
     source_insight_id = Column(Integer, ForeignKey("ai_insights.id"), nullable=True)
     category = Column(String(30), nullable=False)       # market_regime, sector, stock, breadth, anomaly
@@ -233,7 +235,7 @@ class AIPrediction(Base):
     __tablename__ = "ai_predictions"
 
     id = Column(Integer, primary_key=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     source_insight_id = Column(Integer, ForeignKey("ai_insights.id"), nullable=True)
     pattern_id = Column(Integer, ForeignKey("ai_patterns.id"), nullable=True)  # pattern this prediction tests
     prediction_date = Column(Date, nullable=False)
@@ -262,7 +264,7 @@ class AIPattern(Base):
     __tablename__ = "ai_patterns"
 
     id = Column(Integer, primary_key=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     pattern_name = Column(String(200), nullable=False)
     description = Column(Text, nullable=False)
     category = Column(String(30), nullable=False)        # sector_rotation, momentum, seasonal, volume, correlation
@@ -306,7 +308,7 @@ class AIMemorySummary(Base):
     __tablename__ = "ai_memory_summaries"
 
     id = Column(Integer, primary_key=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     period_type = Column(String(10), nullable=False)     # weekly, monthly
     period_start = Column(Date, nullable=False)
     period_end = Column(Date, nullable=False)

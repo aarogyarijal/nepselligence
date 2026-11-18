@@ -5,6 +5,7 @@ import { fetchFloorsheet } from '@/lib/api'
 import { formatPrice } from '@/lib/format'
 import { TipLabel, Tooltip } from '@/components/Tooltip'
 import type { FloorsheetRow, FloorsheetAnalytics, AnomalyType } from '@/types/market'
+import { formatNPTClock, nptBucketKey } from '@/lib/nptTime'
 
 type Tab = 'all' | 'anomalies' | 'large'
 type Range = 1 | 3 | 7 | 14 | 30
@@ -45,34 +46,6 @@ function fmtCrore(n: number | null | undefined) {
   if (n >= 1e7) return `Rs ${(n / 1e7).toFixed(2)}Cr`
   if (n >= 1e5) return `Rs ${(n / 1e5).toFixed(1)}L`
   return `Rs ${n.toLocaleString('en-NP', { maximumFractionDigits: 0 })}`
-}
-
-/** Format time as HH:MM in NPT */
-function fmtTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString('en-IN', {
-      timeZone: 'Asia/Kathmandu',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    })
-  } catch {
-    return iso
-  }
-}
-
-/** Get 10-minute bucket key like "11:00" from an ISO timestamp */
-function getBucketKey(iso: string): string {
-  try {
-    const d = new Date(iso)
-    // Convert to NPT
-    const npt = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Kathmandu' }))
-    const h = npt.getHours().toString().padStart(2, '0')
-    const m = (Math.floor(npt.getMinutes() / 10) * 10).toString().padStart(2, '0')
-    return `${h}:${m}`
-  } catch {
-    return '??:??'
-  }
 }
 
 /** Format bucket key to range label: "11:00 – 11:10" */
@@ -200,7 +173,7 @@ function FloorsheetTimeline({ symbol }: { symbol: string }) {
     const chronological = [...filtered].reverse()
     const map = new Map<string, FloorsheetRow[]>()
     for (const t of chronological) {
-      const key = getBucketKey(t.time)
+      const key = nptBucketKey(t.time)
       const arr = map.get(key)
       if (arr) arr.push(t)
       else map.set(key, [t])
@@ -322,7 +295,7 @@ function FloorsheetTimeline({ symbol }: { symbol: string }) {
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-slate-800 text-slate-400 z-10">
               <tr>
-                <th className="px-4 py-2 text-left font-medium">Time</th>
+                <th className="px-4 py-2 text-left font-medium">Time (NPT)</th>
                 <th className="px-4 py-2 text-left font-medium">Buyer</th>
                 <th className="px-4 py-2 text-left font-medium">Seller</th>
                 <th className="px-4 py-2 text-right font-medium">Qty</th>
@@ -350,7 +323,7 @@ function FloorsheetTimeline({ symbol }: { symbol: string }) {
                         key={row.contractNo}
                         className={`transition-colors hover:bg-slate-800/50 ${rowBg}`}
                       >
-                        <td className="px-4 py-1.5 text-slate-500 tabular-nums">{fmtTime(row.time)}</td>
+                        <td className="px-4 py-1.5 text-slate-500 tabular-nums">{formatNPTClock(row.time)}</td>
                         <td className="px-4 py-1.5 text-green-400/70 font-medium truncate max-w-[100px]">{row.buyer}</td>
                         <td className="px-4 py-1.5 text-red-400/70 font-medium truncate max-w-[100px]">{row.seller}</td>
                         <td className={`px-4 py-1.5 text-right tabular-nums ${hasAnomaly && row.anomalies.includes('volumeSpike') ? 'text-amber-400 font-semibold' : 'text-slate-300'}`}>

@@ -1,10 +1,9 @@
 """APScheduler jobs for NEPSE data ingestion."""
 
 import logging
-import zoneinfo
 from datetime import datetime, timezone
 
-NPT = zoneinfo.ZoneInfo("Asia/Kathmandu")
+from .timeutil import NPT, npt_today, parse_npt_time
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -478,7 +477,7 @@ class IngestionScheduler:
         sub_indices, top_gainers, top_losers, top_turnover, live_market, nepse_index_raw, summary_raw = results
 
         cache = get_cache()
-        today = date.today()
+        today = npt_today()
         db = self.db_session_factory()
 
         try:
@@ -818,7 +817,7 @@ class IngestionScheduler:
                     "quantity": int(item.get("contractQuantity") or 0),
                     "rate": float(item.get("contractRate") or 0),
                     "amount": float(item.get("contractAmount") or 0),
-                    "time": item.get("tradeTime"),
+                    "time": parse_npt_time(item.get("tradeTime")),
                     "business_date": item.get("businessDate"),
                     "security_name": item.get("securityName"),
                 })
@@ -870,10 +869,10 @@ class IngestionScheduler:
                 DELETE FROM stock_prices
                 WHERE time < :cutoff
                   AND id NOT IN (
-                    SELECT DISTINCT ON (symbol, time::date) id
+                    SELECT DISTINCT ON (symbol, (time AT TIME ZONE 'Asia/Kathmandu')::date) id
                     FROM stock_prices
                     WHERE time < :cutoff
-                    ORDER BY symbol, time::date, time DESC
+                    ORDER BY symbol, (time AT TIME ZONE 'Asia/Kathmandu')::date, time DESC
                   )
             """)
             result = db.execute(stmt, {"cutoff": cutoff})
@@ -908,15 +907,15 @@ class IngestionScheduler:
         try:
             from sqlalchemy import text as sql_text
             from datetime import date
-            today = date.today()
+            today = npt_today()
 
             price_count = db.execute(
-                sql_text("SELECT COUNT(*) FROM stock_prices WHERE time::date = :today"),
+                sql_text("SELECT COUNT(*) FROM stock_prices WHERE (time AT TIME ZONE 'Asia/Kathmandu')::date = :today"),
                 {"today": today}
             ).scalar()
 
             summary_count = db.execute(
-                sql_text("SELECT COUNT(*) FROM market_summary WHERE time::date = :today"),
+                sql_text("SELECT COUNT(*) FROM market_summary WHERE (time AT TIME ZONE 'Asia/Kathmandu')::date = :today"),
                 {"today": today}
             ).scalar()
 

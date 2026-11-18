@@ -7,6 +7,7 @@ import { formatPrice, formatChangePct, changeClass, changeArrow } from '@/lib/fo
 import LightweightAreaChart from '@/components/LightweightAreaChart'
 import type { TimeRange } from '@/app/page'
 import type { TimeInterval } from '@/types/market'
+import { dailyRangeStart } from '@/lib/nptTime'
 
 interface ChartPoint {
   time: string
@@ -21,20 +22,6 @@ interface IndexChartProps {
 
 /** Daily ranges that can be served from preloaded 1Y data */
 const DAILY_RANGES = new Set<TimeRange>(['5D', '1M', '3M', '6M', '1Y'])
-
-/** Compute the start date for a daily range relative to today */
-function dailyRangeStart(r: TimeRange): string {
-  const d = new Date()
-  switch (r) {
-    case '5D':  d.setDate(d.getDate() - 5); break
-    case '1M':  d.setMonth(d.getMonth() - 1); break
-    case '3M':  d.setMonth(d.getMonth() - 3); break
-    case '6M':  d.setMonth(d.getMonth() - 6); break
-    case '1Y':
-    default:    return ''
-  }
-  return d.toISOString().slice(0, 10)
-}
 
 function IndexChart({ isOpen, range, interval = '1min' }: IndexChartProps) {
   // Preloaded 1Y daily data (fetched once)

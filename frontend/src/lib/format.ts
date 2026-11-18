@@ -37,29 +37,8 @@ export function formatTurnover(value: number | null | undefined): string {
   return `Rs ${value.toLocaleString('en-IN')}`
 }
 
-/** NPT offset in seconds (UTC+5:45) — used to shift Unix timestamps for lightweight-charts. */
-export const NPT_OFFSET_SECONDS = 5 * 3600 + 45 * 60 // 20700
-
-/** Convert an ISO timestamp to a Unix seconds value displayed as NPT in lightweight-charts. */
-export function toNPTUnix(isoString: string): number {
-  return Math.floor(new Date(isoString).getTime() / 1000) + NPT_OFFSET_SECONDS
-}
-
-/** Format a datetime string in Asia/Kathmandu timezone. */
-export function formatNPT(isoString: string | null | undefined): string {
-  if (!isoString) return '—'
-  try {
-    return new Date(isoString).toLocaleString('en-IN', {
-      timeZone: 'Asia/Kathmandu',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return isoString
-  }
-}
+// NPT time helpers live in nptTime.ts; re-exported here for existing imports.
+export { NPT_OFFSET_SECONDS, toNPTUnix, formatNPT } from './nptTime'
 
 /** Return CSS class for positive/negative/flat value. */
 export function changeClass(value: number | null | undefined): string {

@@ -7,6 +7,7 @@ import { fetchStockChart } from '@/lib/api'
 import type { TimeInterval, StockChartResponse, StockChartPoint, OHLCVPoint } from '@/types/market'
 import { VALID_INTERVALS, DEFAULT_INTERVAL } from '@/types/market'
 import type { TimeRange } from '@/app/page'
+import { dailyRangeStart } from '@/lib/nptTime'
 
 const RANGES: TimeRange[] = ['today', 'last_day', '5D', '1M', '3M', '6M', '1Y']
 const RANGE_LABELS: Record<TimeRange, string> = {
@@ -15,20 +16,6 @@ const RANGE_LABELS: Record<TimeRange, string> = {
 
 /** Daily ranges that can be served from preloaded 1Y data */
 const DAILY_RANGES = new Set<TimeRange>(['5D', '1M', '3M', '6M', '1Y'])
-
-/** Compute the start date for a daily range relative to today */
-function dailyRangeStart(r: TimeRange): string {
-  const d = new Date()
-  switch (r) {
-    case '5D':  d.setDate(d.getDate() - 5); break
-    case '1M':  d.setMonth(d.getMonth() - 1); break
-    case '3M':  d.setMonth(d.getMonth() - 3); break
-    case '6M':  d.setMonth(d.getMonth() - 6); break
-    case '1Y':  // fall through — show all
-    default:    return ''
-  }
-  return d.toISOString().slice(0, 10)
-}
 
 interface StockChartPanelProps {
   symbol: string

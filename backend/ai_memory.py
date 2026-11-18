@@ -10,9 +10,8 @@ import logging
 import re
 from datetime import datetime, timezone, timedelta, date
 
-import zoneinfo
 
-NPT = zoneinfo.ZoneInfo("Asia/Kathmandu")
+from .timeutil import NPT, npt_today
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text as sql_text, func
@@ -249,7 +248,7 @@ def assemble_memory_context(
     Sized appropriately for each insight type's token budget.
     """
     parts: list[str] = []
-    today = date.today()
+    today = npt_today()
 
     # --- Market Regime ---
     regime = db.query(AIMarketRegime).filter(
@@ -513,7 +512,7 @@ def grade_prediction(db: Session, pred: AIPrediction) -> dict | None:
 
 def get_prediction_scorecard(db: Session, days: int = 30) -> dict:
     """Hit rate, naive-baseline hit rate and edge over the last N days."""
-    cutoff = date.today() - timedelta(days=days)
+    cutoff = npt_today() - timedelta(days=days)
     resolved = db.query(AIPrediction).filter(
         AIPrediction.resolved_at != None,
         AIPrediction.prediction_date >= cutoff,
@@ -554,7 +553,7 @@ async def resolve_pending_predictions(db: Session, provider_manager=None) -> lis
     Predictions more than PREDICTION_GRACE_DAYS past their target, or with no
     gradable condition, are expired without a verdict.
     """
-    today = date.today()
+    today = npt_today()
     now = datetime.now(timezone.utc)
     stale_before = today - timedelta(days=PREDICTION_GRACE_DAYS)
 
@@ -622,7 +621,7 @@ async def generate_weekly_summary(db: Session, provider_manager=None) -> None:
     if not settings.claude_api_key:
         return
 
-    today = date.today()
+    today = npt_today()
     # Summarize the most recent Monday-Sunday week whose Friday session is over.
     # Run on Saturday, that is the trading week that just ended.
     last_friday = today - timedelta(days=(today.weekday() - 4) % 7)
@@ -767,7 +766,7 @@ async def generate_monthly_summary(db: Session, provider_manager=None) -> None:
     if not settings.claude_api_key:
         return
 
-    today = date.today()
+    today = npt_today()
     # Summarize the previous month
     if today.month == 1:
         period_start = date(today.year - 1, 12, 1)
@@ -869,7 +868,7 @@ def cleanup_expired_memory(db: Session) -> int:
 
     Returns total number of rows affected.
     """
-    today = date.today()
+    today = npt_today()
     affected = 0
 
     # Expire observations past their expiry date
