@@ -2,8 +2,11 @@
 
 import unittest
 
+from datetime import date
+
 from backend.prediction_grading import (
     describe,
+    duplicate_key,
     grade,
     normalize_condition,
     pattern_status,
@@ -210,6 +213,35 @@ class TestPatternStatus(unittest.TestCase):
     def test_can_be_demoted(self):
         self.assertEqual(pattern_status(6, 8), "established")
         self.assertEqual(pattern_status(6, 11), "hypothesis")
+
+
+class TestDuplicateKey(unittest.TestCase):
+    """Two pending predictions are the same call if symbol, direction and target date match."""
+
+    DAY = date(2026, 11, 19)
+
+    def key(self, conditions, symbol=None, day=None):
+        return duplicate_key(normalize_condition(conditions, symbol), day or self.DAY)
+
+    def test_same_call_with_a_different_threshold_is_a_duplicate(self):
+        a = self.key({"metric": "price", "symbol": "RSML", "direction": "above", "threshold": 2702})
+        b = self.key({"metric": "price", "symbol": "rsml", "direction": "Above", "threshold": 2700})
+        self.assertEqual(a, b)
+
+    def test_index_spellings_are_the_same_call(self):
+        a = self.key({"metric": "nepse_index", "direction": "below", "threshold": 2610})
+        b = self.key({"metric": "price", "symbol": "NEPSE", "direction": "below", "threshold": 2600})
+        self.assertEqual(a, b)
+
+    def test_opposite_direction_is_not_a_duplicate(self):
+        a = self.key({"metric": "price", "symbol": "CFCL", "direction": "below", "threshold": 570})
+        b = self.key({"metric": "price", "symbol": "CFCL", "direction": "above", "threshold": 580})
+        self.assertNotEqual(a, b)
+
+    def test_different_symbol_or_target_date_is_not_a_duplicate(self):
+        cond = {"metric": "price", "symbol": "CFCL", "direction": "below", "threshold": 570}
+        self.assertNotEqual(self.key(cond), self.key({**cond, "symbol": "RSML"}))
+        self.assertNotEqual(self.key(cond), self.key(cond, day=date(2026, 11, 20)))
 
 
 if __name__ == "__main__":

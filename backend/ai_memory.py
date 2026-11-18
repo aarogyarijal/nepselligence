@@ -33,6 +33,7 @@ from .memory_parsing import parse_memory_block, split_response  # noqa: F401  (r
 from .prediction_grading import (
     PREDICTION_GRACE_DAYS,
     describe,
+    duplicate_key,
     grade,
     normalize_condition,
     pattern_status,
@@ -145,12 +146,25 @@ def write_memory(
     # --- Predictions ---
     # Only predictions that can be graded in code are kept: an untestable
     # prediction can never feed the scorecard, so it teaches nothing.
+    # A call that is already pending is not recorded again, so a repeat from a
+    # later insight run is not counted twice on the scorecard.
+    pending_keys = set()
+    for p in db.query(AIPrediction).filter(AIPrediction.status == "pending").all():
+        existing_condition = normalize_condition(p.conditions, p.symbol)
+        if existing_condition is not None:
+            pending_keys.add(duplicate_key(existing_condition, p.target_date))
+
     for pred in memory_data.get("predictions") or []:
         condition = normalize_condition(pred.get("conditions"), pred.get("symbol"))
         target_days = valid_target_days(pred.get("target_days"))
         if not pred.get("text") or condition is None or target_days is None:
             logger.info(f"Dropped ungradable prediction: {str(pred.get('text'))[:80]!r}")
             continue
+        key = duplicate_key(condition, observation_date + timedelta(days=target_days))
+        if key in pending_keys:
+            logger.info(f"Skipped duplicate of a pending prediction: {pred['text'][:80]!r}")
+            continue
+        pending_keys.add(key)
         # A prediction made on the strength of a pattern is a test of it
         pattern_name = (pred.get("pattern") or "").strip()
         pattern = None

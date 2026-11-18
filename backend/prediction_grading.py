@@ -60,6 +60,17 @@ def normalize_condition(conditions, symbol: str | None = None) -> dict | None:
     return {"metric": metric, "symbol": sym, "direction": direction, "threshold": threshold}
 
 
+def duplicate_key(condition: dict, target_date) -> tuple:
+    """Identity of a call for spotting repeats among pending predictions.
+
+    Two predictions are the same call when they name the same symbol (None is
+    the NEPSE index), the same direction and the same target date. Metric and
+    threshold are left out on purpose: "RSML above 2700" and "RSML above 2702"
+    for the same day are one call made twice.
+    """
+    return (condition["symbol"], condition["direction"], target_date)
+
+
 def valid_target_days(target_days) -> int | None:
     """Return target_days as an int in 1..MAX_TARGET_DAYS, else None."""
     if isinstance(target_days, bool):
