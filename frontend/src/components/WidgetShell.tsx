@@ -4,6 +4,8 @@ import { ReactNode, memo } from 'react'
 
 interface WidgetShellProps {
   title?: string
+  /** The time period the card's numbers cover, shown beside the title (e.g. "Today", "1M") */
+  period?: string
   loading?: boolean
   error?: string | null
   empty?: boolean
@@ -18,6 +20,7 @@ interface WidgetShellProps {
 /** Shared wrapper for all dashboard widgets. Handles loading/error/empty states uniformly. */
 function WidgetShell({
   title,
+  period,
   loading,
   error,
   empty,
@@ -37,7 +40,17 @@ function WidgetShell({
       aria-busy={loading}
     >
       {title && (
-        <h2 className="text-xl font-semibold text-white mb-4 shrink-0">{title}</h2>
+        <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
+          <h2 className="text-xl font-semibold text-white min-w-0 truncate">{title}</h2>
+          {period && (
+            <span
+              className="shrink-0 px-2 py-0.5 rounded border border-slate-700 bg-slate-800 text-xs font-medium text-slate-300 whitespace-nowrap"
+              title="Time period shown"
+            >
+              {period}
+            </span>
+          )}
+        </div>
       )}
 
       <div className={`flex-1 min-h-0${scrollable ? ' overflow-y-auto' : ''}`}>
