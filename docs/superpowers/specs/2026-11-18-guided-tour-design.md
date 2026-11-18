@@ -26,7 +26,8 @@ to him.
   already do that.
 - Steps that make him click something in the app to continue.
 - Translating the app itself. Only the tour is bilingual.
-- A phone layout. The app is desktop only (1280px and up).
+- A phone layout. The app is moving from desktop only to tablets and up
+  (700px), so the tour works from 700px and with touch, but not on phones.
 - Backend changes or new dependencies.
 
 ## Anti-goals
