@@ -32,6 +32,8 @@ export const TOUR_UI: Record<TourLang, {
   back: string
   close: string
   finish: string
+  /** Shown while a page is still loading its panels */
+  loading: string
   stepOf: (n: number, total: number) => string
 }> = {
   en: {
@@ -40,6 +42,7 @@ export const TOUR_UI: Record<TourLang, {
     back: 'Back',
     close: 'Close',
     finish: 'Finish',
+    loading: 'One moment…',
     stepOf: (n, total) => `Step ${n} of ${total}`,
   },
   ne: {
@@ -48,6 +51,7 @@ export const TOUR_UI: Record<TourLang, {
     back: 'पछाडि',
     close: 'बन्द गर्नुहोस्',
     finish: 'सकियो',
+    loading: 'एकछिन पर्खनुहोस्…',
     stepOf: (n, total) => `${toNepaliDigits(total)} मध्ये ${toNepaliDigits(n)}`,
   },
 }

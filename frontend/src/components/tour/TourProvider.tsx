@@ -7,6 +7,7 @@ import { stepsFor } from './tourSteps'
 import type { TourLang, TourPage, TourStep } from './tourSteps'
 import { TourCtx, pageOf } from './tourContext'
 import type { TourState } from './tourContext'
+import TourOverlay from './TourOverlay'
 
 export { useTour } from './tourContext'
 export type { TourState } from './tourContext'
@@ -140,6 +141,7 @@ export default function TourProvider({ children }: { children: React.ReactNode }
   return (
     <TourCtx.Provider value={value}>
       {children}
+      <TourOverlay />
     </TourCtx.Provider>
   )
 }
