@@ -240,6 +240,14 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
           {scorecard && scorecard.total > 0 && (
             <span className="ml-auto text-xs text-slate-500">
               Pred: {scorecard.hit_rate_pct.toFixed(0)}% hit ({scorecard.confirmed}/{scorecard.total})
+              {scorecard.edge_pct != null && (
+                <span
+                  className={scorecard.edge_pct > 0 ? 'text-green-400' : 'text-slate-500'}
+                  title={`A forecaster assuming nothing changes scored ${scorecard.baseline_hit_rate_pct?.toFixed(0)}% on the same predictions`}
+                >
+                  {' '}{scorecard.edge_pct > 0 ? '+' : ''}{scorecard.edge_pct.toFixed(0)} vs baseline
+                </span>
+              )}
             </span>
           )}
         </div>

@@ -29,6 +29,14 @@ from .models import (
     DailySectorIndex,
     StockPrice,
 )
+from .prediction_grading import (
+    PREDICTION_GRACE_DAYS,
+    describe,
+    grade,
+    normalize_condition,
+    summarize,
+    valid_target_days,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,23 +157,26 @@ def write_memory(
             db.add(row)
 
     # --- Predictions ---
+    # Only predictions that can be graded in code are kept: an untestable
+    # prediction can never feed the scorecard, so it teaches nothing.
     for pred in memory_data.get("predictions") or []:
-        target_days = pred.get("target_days")
-        target_dt = observation_date + timedelta(days=target_days) if target_days else None
-        row = AIPrediction(
+        condition = normalize_condition(pred.get("conditions"), pred.get("symbol"))
+        target_days = valid_target_days(pred.get("target_days"))
+        if not pred.get("text") or condition is None or target_days is None:
+            logger.info(f"Dropped ungradable prediction: {str(pred.get('text'))[:80]!r}")
+            continue
+        db.add(AIPrediction(
             source_insight_id=insight_id,
             prediction_date=observation_date,
-            target_date=target_dt,
+            target_date=observation_date + timedelta(days=target_days),
             category=pred.get("category", "price_direction"),
-            symbol=pred.get("symbol"),
+            symbol=condition["symbol"] or pred.get("symbol"),
             sector=pred.get("sector"),
-            prediction_text=pred.get("text", ""),
-            conditions=pred.get("conditions"),
+            prediction_text=pred["text"],
+            conditions=condition,
             reference_values=pred.get("reference_values"),
             status="pending",
-        )
-        if row.prediction_text:
-            db.add(row)
+        ))
 
     # --- Market Regime ---
     regime = memory_data.get("regime")
@@ -262,7 +273,9 @@ def assemble_memory_context(
     today = date.today()
 
     # --- Market Regime ---
-    regime = db.query(AIMarketRegime).order_by(AIMarketRegime.date.desc()).first()
+    regime = db.query(AIMarketRegime).filter(
+        AIMarketRegime.date >= today - timedelta(days=7)
+    ).order_by(AIMarketRegime.date.desc()).first()
     if regime:
         leading = ", ".join(regime.leading_sectors or []) or "none identified"
         lagging = ", ".join(regime.lagging_sectors or []) or "none identified"
@@ -371,17 +384,24 @@ def assemble_memory_context(
                 pat_lines.append(f'- "{p.pattern_name}" ({p.status}, confirmed {conf_rate})')
             parts.append("[ACTIVE PATTERNS]\n" + "\n".join(pat_lines))
 
-    # --- Prediction Scorecard (weekly_wrap only) ---
-    if insight_type == "weekly_wrap":
-        scorecard = get_prediction_scorecard(db, days=30)
-        if scorecard["total"] > 0:
-            parts.append(
-                f"[PREDICTION TRACK RECORD]\n"
-                f"Last 30 days: {scorecard['confirmed']} confirmed / "
-                f"{scorecard['invalidated']} invalidated / "
-                f"{scorecard['expired']} expired = "
-                f"{scorecard['hit_rate_pct']:.0f}% hit rate"
-            )
+    # --- Graded outcomes of past predictions (the feedback signal) ---
+    if insight_type in ("market_open", "daily_close", "weekly_wrap"):
+        graded = db.query(AIPrediction).filter(
+            AIPrediction.status.in_(["confirmed", "invalidated"]),
+            AIPrediction.resolved_at >= datetime.now(timezone.utc) - timedelta(days=7),
+        ).order_by(AIPrediction.resolved_at.desc()).limit(8).all()
+        if graded:
+            lines = [
+                f'- {"RIGHT" if p.status == "confirmed" else "WRONG"}: "{p.prediction_text}" '
+                f"({p.resolution_text})"
+                for p in graded
+            ]
+            parts.append("[GRADED PREDICTIONS, LAST 7 DAYS]\n" + "\n".join(lines))
+
+    if insight_type in ("daily_close", "weekly_wrap"):
+        track_record = format_scorecard(get_prediction_scorecard(db, days=30))
+        if track_record:
+            parts.append(track_record)
 
     # --- Weekly/Monthly Summaries (daily_close + weekly_wrap) ---
     if insight_type == "daily_close":
@@ -420,189 +440,174 @@ def assemble_memory_context(
 # Prediction Resolution
 # ---------------------------------------------------------------------------
 
-def _fetch_current_value(db: Session, metric: str, symbol: str | None) -> float | None:
-    """Fetch a current metric value for prediction checking."""
-    if metric == "nepse_index":
-        row = db.query(MarketSummary).order_by(MarketSummary.time.desc()).first()
-        return row.nepse_index if row else None
+def _end_of_day(d: date) -> datetime:
+    """Midnight NPT at the end of business date d."""
+    return datetime(d.year, d.month, d.day, tzinfo=NPT) + timedelta(days=1)
 
-    if metric in ("price", "ltp") and symbol:
-        row = db.query(StockPrice).filter(
-            StockPrice.symbol == symbol
-        ).order_by(StockPrice.time.desc()).first()
-        return row.ltp if row else None
 
-    if metric == "change_pct" and symbol:
-        row = db.query(StockPrice).filter(
-            StockPrice.symbol == symbol
-        ).order_by(StockPrice.time.desc()).first()
-        return row.change_percent if row else None
+def _level_before(db: Session, symbol: str | None, before: datetime) -> tuple[float, datetime] | None:
+    """Last known level strictly before a moment: a stock's price, or the NEPSE index if symbol is None."""
+    if symbol is None:
+        row = db.query(MarketSummary).filter(
+            MarketSummary.time < before, MarketSummary.nepse_index > 0,
+        ).order_by(MarketSummary.time.desc()).first()
+        return (row.nepse_index, row.time) if row else None
+    row = db.query(StockPrice).filter(
+        StockPrice.symbol == symbol, StockPrice.time < before,
+    ).order_by(StockPrice.time.desc()).first()
+    return (row.ltp, row.time) if row else None
 
-    if metric == "sector_change_pct":
-        # Would need sector name from conditions — skip for now
+
+def _closing_level(
+    db: Session, symbol: str | None, target: date, made_at: datetime
+) -> tuple[float, datetime] | None:
+    """Closing level for a target date, rolling forward to the next traded day.
+
+    A target that lands on a weekend, a holiday, or a day the stock did not
+    trade is graded on the first day after it that has data. Returns None
+    until such a day exists.
+    """
+    day_end = _end_of_day(target)
+    level = _level_before(db, symbol, day_end)
+    if level and level[1] >= day_end - timedelta(days=1) and level[1] > made_at:
+        return level
+
+    if symbol is None:
+        nxt = db.query(MarketSummary.time).filter(
+            MarketSummary.time >= day_end, MarketSummary.nepse_index > 0,
+        ).order_by(MarketSummary.time.asc()).first()
+    else:
+        nxt = db.query(StockPrice.time).filter(
+            StockPrice.symbol == symbol, StockPrice.time >= day_end,
+        ).order_by(StockPrice.time.asc()).first()
+    if nxt is None:
+        return None
+    return _level_before(db, symbol, _end_of_day(nxt[0].astimezone(NPT).date()))
+
+
+def _made_at(pred: AIPrediction) -> datetime:
+    """When the prediction was made, as an aware datetime."""
+    made = pred.created_at
+    if made is None:
+        return _end_of_day(pred.prediction_date)
+    return made if made.tzinfo else made.replace(tzinfo=timezone.utc)
+
+
+def grade_prediction(db: Session, pred: AIPrediction) -> dict | None:
+    """Grade one prediction against the level on its target date.
+
+    Returns None if it cannot be graded yet (no gradable condition, or no
+    market data on or after the target date).
+    """
+    condition = normalize_condition(pred.conditions, pred.symbol)
+    if condition is None or pred.target_date is None:
         return None
 
-    # For technical indicators (rsi, macd, etc.), we'd need to compute them.
-    # That's expensive per-prediction; handled in batch by the AI resolution prompt.
-    return None
+    made_at = _made_at(pred)
+    end = _closing_level(db, condition["symbol"], pred.target_date, made_at)
+    if end is None:
+        return None
+    end_value, end_time = end
+
+    start = _level_before(db, condition["symbol"], made_at)
+    result = grade(condition, start[0] if start else None, end_value)
+    if result is None:
+        return None
+    result["condition"] = condition
+    result["value_time"] = end_time.isoformat()
+    result["explanation"] = describe(condition, result)
+    return result
 
 
 def get_prediction_scorecard(db: Session, days: int = 30) -> dict:
-    """Compute prediction hit rate over the last N days."""
+    """Hit rate, naive-baseline hit rate and edge over the last N days."""
     cutoff = date.today() - timedelta(days=days)
     resolved = db.query(AIPrediction).filter(
         AIPrediction.resolved_at != None,
         AIPrediction.prediction_date >= cutoff,
     ).all()
+    return summarize([
+        {
+            "status": p.status,
+            "category": p.category,
+            "baseline_correct": (p.outcome_values or {}).get("baseline_correct"),
+        }
+        for p in resolved
+    ])
 
-    total = len(resolved)
-    confirmed = sum(1 for p in resolved if p.status == "confirmed")
-    partial = sum(1 for p in resolved if p.status == "partially_confirmed")
-    invalidated = sum(1 for p in resolved if p.status == "invalidated")
-    expired = sum(1 for p in resolved if p.status == "expired")
-    hit_rate = (confirmed + partial * 0.5) / total * 100 if total > 0 else 0
 
-    return {
-        "total": total,
-        "confirmed": confirmed,
-        "partially_confirmed": partial,
-        "invalidated": invalidated,
-        "expired": expired,
-        "hit_rate_pct": hit_rate,
-    }
+def format_scorecard(card: dict) -> str:
+    """Scorecard as a prompt block. Empty string when nothing has been graded."""
+    if not card["total"]:
+        return ""
+    lines = [
+        f"[PREDICTION TRACK RECORD, LAST 30 DAYS]",
+        f"{card['confirmed']} right / {card['invalidated']} wrong = {card['hit_rate_pct']:.0f}% hit rate.",
+    ]
+    if card["edge_pct"] is not None:
+        lines.append(
+            f"A forecaster assuming nothing changes scored {card['baseline_hit_rate_pct']:.0f}% on the same calls; "
+            f"your edge is {card['edge_pct']:+.0f} points."
+        )
+    for cat, c in card["by_category"].items():
+        edge = f", edge {c['edge_pct']:+.0f}" if c["edge_pct"] is not None else ""
+        lines.append(f"- {cat}: {c['confirmed']}/{c['total']} right{edge}")
+    return "\n".join(lines)
 
 
 async def resolve_pending_predictions(db: Session, provider_manager=None) -> list[dict]:
-    """Check pending predictions against current data and resolve via Claude batch call.
+    """Grade every pending prediction whose target date has arrived.
 
-    Runs before daily_close generation to update prediction statuses.
-    Returns list of resolution dicts for injection into the insight prompt.
+    Grading is done in code against the target-date level, never by a model.
+    Predictions more than PREDICTION_GRACE_DAYS past their target, or with no
+    gradable condition, are expired without a verdict.
     """
     today = date.today()
+    now = datetime.now(timezone.utc)
+    stale_before = today - timedelta(days=PREDICTION_GRACE_DAYS)
 
-    # Find predictions due for resolution (target_date passed or within 1 day)
-    pending = db.query(AIPrediction).filter(
+    due = db.query(AIPrediction).filter(
         AIPrediction.status == "pending",
         AIPrediction.target_date != None,
-        AIPrediction.target_date <= today + timedelta(days=1),
-    ).order_by(AIPrediction.prediction_date.asc()).limit(10).all()
+        AIPrediction.target_date <= today,
+    ).order_by(AIPrediction.prediction_date.asc()).all()
 
-    if not pending:
-        return []
-
-    # Build context for each prediction
-    resolution_items = []
-    for pred in pending:
-        current_vals = {}
-        if pred.conditions and isinstance(pred.conditions, dict):
-            metric = pred.conditions.get("metric")
-            sym = pred.conditions.get("symbol") or pred.symbol
-            val = _fetch_current_value(db, metric, sym) if metric else None
-            if val is not None:
-                current_vals[metric] = val
-
-        # Also fetch basic price if symbol exists
-        if pred.symbol:
-            price = _fetch_current_value(db, "price", pred.symbol)
-            pct = _fetch_current_value(db, "change_pct", pred.symbol)
-            if price is not None:
-                current_vals["price"] = price
-            if pct is not None:
-                current_vals["change_pct"] = pct
-
-        # NEPSE index for market-level predictions
-        if not pred.symbol:
-            idx = _fetch_current_value(db, "nepse_index", None)
-            if idx is not None:
-                current_vals["nepse_index"] = idx
-
-        resolution_items.append({
-            "id": pred.id,
-            "text": pred.prediction_text,
-            "made": str(pred.prediction_date),
-            "target": str(pred.target_date) if pred.target_date else "open",
-            "reference": pred.reference_values or {},
-            "current": current_vals,
-        })
-
-    if not resolution_items:
-        return []
-
-    # Call Claude haiku to assess predictions in batch
-    if not settings.claude_api_key:
-        logger.info("No CLAUDE_API_KEY, skipping prediction resolution")
-        return []
-
-    prompt = f"""You are evaluating past market predictions against current data.
-
-For each prediction below, assess whether it was confirmed, invalidated, partially_confirmed, or should remain pending.
-
-<predictions>
-{json.dumps(resolution_items, indent=2)}
-</predictions>
-
-Return a JSON array with one object per prediction:
-[{{"id": <prediction_id>, "status": "confirmed|invalidated|partially_confirmed|expired", "explanation": "one sentence"}}]
-
-Rules:
-- "confirmed": the predicted outcome clearly occurred
-- "partially_confirmed": the direction was right but magnitude was off, or it partially played out
-- "invalidated": the opposite occurred or conditions moved against the prediction
-- "expired": target date passed with no clear resolution either way
-- If you cannot determine from the data provided, use "expired"
-
-Return ONLY the JSON array, no other text."""
-
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=settings.claude_api_key)
-        message = client.messages.create(
-            model=settings.claude_model_fast,
-            max_tokens=800,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = message.content[0].text if message.content else "[]"
-        # Strip code fences if present
-        raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
-        raw = re.sub(r"\s*```$", "", raw)
-        resolutions = json.loads(raw)
-    except Exception as e:
-        logger.error(f"Prediction resolution API call failed: {e}")
-        return []
-
-    # Apply resolutions to database
     results = []
-    pred_map = {p.id: p for p in pending}
-    for res in resolutions:
-        pred_id = res.get("id")
-        pred = pred_map.get(pred_id)
-        if not pred:
+    for pred in due:
+        if pred.target_date < stale_before:
+            pred.status = "expired"
+            pred.resolved_at = now
+            pred.resolution_text = "Expired: not graded within a week of its target date."
+            continue
+        if normalize_condition(pred.conditions, pred.symbol) is None:
+            pred.status = "expired"
+            pred.resolved_at = now
+            pred.resolution_text = "Expired: no condition that can be checked in code."
             continue
 
-        new_status = res.get("status", "expired")
-        if new_status not in ("confirmed", "invalidated", "partially_confirmed", "expired"):
-            new_status = "expired"
+        result = grade_prediction(db, pred)
+        if result is None:
+            continue  # no target-date data yet; try again at the next close
 
-        pred.status = new_status
-        pred.resolution_text = res.get("explanation", "")
-        pred.resolved_at = datetime.now(timezone.utc)
-        # Store current values as outcome
-        matching_item = next((i for i in resolution_items if i["id"] == pred_id), None)
-        if matching_item:
-            pred.outcome_values = matching_item["current"]
-
+        pred.status = result["status"]
+        pred.resolved_at = now
+        pred.resolution_text = result["explanation"]
+        pred.outcome_values = {
+            k: result[k] for k in ("observed", "start_value", "end_value", "value_time", "baseline_correct")
+        }
         results.append({
             "prediction": pred.prediction_text,
-            "status": new_status,
-            "explanation": res.get("explanation", ""),
+            "status": result["status"],
+            "explanation": result["explanation"],
         })
 
     try:
         db.commit()
-        logger.info(f"Resolved {len(results)} predictions")
+        logger.info(f"Graded {len(results)} of {len(due)} due predictions")
     except Exception as e:
-        logger.error(f"Failed to save prediction resolutions: {e}")
+        logger.error(f"Failed to save prediction grades: {e}")
         db.rollback()
+        return []
 
     return results
 
@@ -877,17 +882,17 @@ def cleanup_expired_memory(db: Session) -> int:
     ).update({"still_relevant": False})
     affected += count
 
-    # Expire overdue predictions (target_date passed by > 3 days with no resolution)
-    overdue_cutoff = today - timedelta(days=3)
+    # Expire predictions too far past their target date to grade honestly
+    overdue_cutoff = today - timedelta(days=PREDICTION_GRACE_DAYS)
     expired_preds = db.query(AIPrediction).filter(
         AIPrediction.status == "pending",
         AIPrediction.target_date != None,
-        AIPrediction.target_date <= overdue_cutoff,
+        AIPrediction.target_date < overdue_cutoff,
     ).all()
     for p in expired_preds:
         p.status = "expired"
         p.resolved_at = datetime.now(timezone.utc)
-        p.resolution_text = "Auto-expired: target date passed without resolution."
+        p.resolution_text = "Expired: not graded within a week of its target date."
     affected += len(expired_preds)
 
     # Delete very old weekly summaries (beyond retention)
@@ -929,7 +934,7 @@ After your analysis, append a JSON block wrapped in <memory> tags containing you
     {"category": "market_regime|sector|stock|breadth|anomaly", "subcategory": "optional_detail", "symbol": null, "sector": null, "text": "One-sentence factual observation with specific numbers", "confidence": "low|medium|high", "data_snapshot": {"key_metric": value}}
   ],
   "predictions": [
-    {"category": "price_direction|sector_rotation|breakout|support_test", "symbol": null, "sector": null, "text": "Specific forward-looking statement", "conditions": {"metric": "rsi|price|nepse_index|change_pct", "symbol": "SYMBOL", "direction": "above|below", "threshold": 60}, "reference_values": {"price": 1250, "rsi": 72}, "target_days": 5}
+    {"category": "price_direction|sector_rotation|breakout|support_test", "symbol": null, "sector": null, "text": "Specific forward-looking statement", "conditions": {"metric": "price|nepse_index|change_pct", "symbol": "SYMBOL or null for the NEPSE index", "direction": "above|below", "threshold": 1280}, "reference_values": {"price": 1250, "rsi": 72}, "target_days": 5}
   ],
   "regime": {
     "trend": "bullish|bearish|sideways|transitioning",
@@ -948,7 +953,13 @@ After your analysis, append a JSON block wrapped in <memory> tags containing you
 
 Guidelines for memory extraction:
 - observations: 2-5 per analysis. Be specific with numbers. Focus on what changed or stands out.
-- predictions: 0-3 per analysis. Only make predictions you'd want tracked. Include measurable conditions where possible.
+- predictions: 0-3 per analysis. Each one is graded automatically by code on its target date and the result is shown back to you, so every prediction MUST carry a testable condition:
+  - "conditions" states what will be TRUE on the target date if you are right. It must say the same thing as "text".
+  - metric "price": closing price of the symbol. metric "nepse_index": the index level. metric "change_pct": percent change from today's level to the target-date close (symbol null = NEPSE index).
+  - "target_days": calendar days from today, 1 to 30. Required.
+  - Predictions without a valid condition and target_days are discarded.
+  - You are also scored against a forecaster who assumes nothing changes. A condition that is already true today earns no credit, so call moves, not the status quo. If you have no real view, make no prediction.
+  - Use your graded predictions and track record in memory to decide what kinds of calls to keep making.
 - regime: Always include. Assess the overall market state honestly.
 - patterns: Only when you notice a recurring behavior. Use "reinforce" with the exact pattern "name" if you see a previously identified pattern repeating (pattern_id should always be null).
 - Do NOT fabricate observations — only record what the data shows."""

@@ -291,6 +291,10 @@ export interface AIPredictionScorecard {
   invalidated: number
   expired: number
   hit_rate_pct: number
+  /** Hit rate of a forecaster who assumes nothing changes, on the same predictions. */
+  baseline_hit_rate_pct?: number | null
+  /** Points by which the AI beats (or trails) that baseline. */
+  edge_pct?: number | null
 }
 
 export interface AIMemorySummary {
