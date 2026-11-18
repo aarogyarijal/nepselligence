@@ -5,6 +5,7 @@ import { fetchMarketOverview, fetchCompanies, runAdminAction } from '@/lib/api'
 import { formatPrice, formatChange, formatChangePct, changeClass, changeArrow } from '@/lib/format'
 import { usePolling } from '@/hooks/usePolling'
 import type { MarketOverview, Company } from '@/types/market'
+import TourButton from '@/components/tour/TourButton'
 
 const ADMIN_ACTIONS = [
   { key: 'prices',  label: 'Ingest Prices',  endpoint: '/api/admin/run/ingest-prices',  desc: 'Pull live stock prices from NepseAPI' },
@@ -84,7 +85,7 @@ export default function MarketStatusBar({ onSymbolSearch, isOpen }: MarketStatus
   return (
     <div className="bg-slate-900 border-b border-slate-700 px-6 py-2 flex items-center gap-6 text-sm flex-wrap">
       {/* Market status indicator */}
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-2 shrink-0" data-tour="status">
         <span className={`w-2 h-2 rounded-full ${isOpen ? 'bg-green-500' : 'bg-slate-500'}`} />
         <span className={`font-semibold ${isOpen ? 'text-green-400' : 'text-slate-400'}`}>
           {isOpen ? 'OPEN' : 'CLOSED'}
@@ -92,7 +93,7 @@ export default function MarketStatusBar({ onSymbolSearch, isOpen }: MarketStatus
       </div>
 
       {/* Index pills */}
-      <div className="flex items-center gap-4 flex-wrap">
+      <div className="flex items-center gap-4 flex-wrap" data-tour="status">
         {[
           { label: 'NEPSE', data: nepse },
           { label: 'Sensitive', data: sensitive },
@@ -120,8 +121,13 @@ export default function MarketStatusBar({ onSymbolSearch, isOpen }: MarketStatus
         </div>
       )}
 
+      {/* Guided tour — restartable at any time */}
+      <div className="ml-auto">
+        <TourButton from="dashboard" />
+      </div>
+
       {/* Admin action buttons */}
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5" data-tour="admin-actions">
         {ADMIN_ACTIONS.map(({ key, label, endpoint, desc }) => (
           <div key={key} className="relative group">
             <button
@@ -152,7 +158,7 @@ export default function MarketStatusBar({ onSymbolSearch, isOpen }: MarketStatus
       </div>
 
       {/* Search */}
-      <div className="relative">
+      <div className="relative" data-tour="search">
         <input
           type="text"
           value={query}

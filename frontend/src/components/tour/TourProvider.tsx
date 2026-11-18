@@ -45,8 +45,6 @@ export default function TourProvider({ children }: { children: React.ReactNode }
   const [progress, setProgress] = useState<Progress>(IDLE)
   const [lang, setLangState] = useState<TourLang>('en')
 
-  const runningRef = useRef(false)
-  runningRef.current = progress.running
   const pathnameRef = useRef(pathname)
   pathnameRef.current = pathname
   /** Share the tour opens for its stock-page half */
@@ -112,18 +110,20 @@ export default function TourProvider({ children }: { children: React.ReactNode }
     }
   }, [start])
 
-  // A page change the tour did not ask for (browser Back, a typed address) ends the tour
-  useEffect(() => {
-    if (prevPathRef.current === pathname) return
-    prevPathRef.current = pathname
-    if (runningRef.current && !samePath(pathname, expectedPathRef.current)) setProgress(IDLE)
-  }, [pathname])
-
-  // Move to the page the current step lives on
   const step = progress.running ? progress.steps[progress.index] : undefined
   const stepPage = step?.page
+
+  // One effect, so the two decisions cannot disagree: a page change the tour did not ask for
+  // (browser Back, a typed address) ends the tour; otherwise move to the page the step lives on.
   useEffect(() => {
-    if (!stepPage || pageOf(pathname) === stepPage) return
+    const pathChanged = prevPathRef.current !== pathname
+    prevPathRef.current = pathname
+    if (!stepPage) return
+    if (pathChanged && !samePath(pathname, expectedPathRef.current)) {
+      setProgress(IDLE)
+      return
+    }
+    if (pageOf(pathname) === stepPage) return
     const target = stepPage === 'stock' ? `/stock/${encodeURIComponent(symbolRef.current)}` : '/'
     expectedPathRef.current = target
     router.push(target)

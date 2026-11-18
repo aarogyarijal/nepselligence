@@ -17,6 +17,7 @@ import StockAIPanel from '@/components/stock/StockAIPanel'
 import StockNewsCard from '@/components/stock/StockNewsCard'
 import ResizeHandle from '@/components/ResizeHandle'
 import { useResizableHeight } from '@/hooks/useResizableHeight'
+import TourButton from '@/components/tour/TourButton'
 
 export default function StockPage() {
   const params = useParams()
@@ -72,19 +73,25 @@ export default function StockPage() {
       <div className="border-b border-slate-800 bg-slate-950 px-6 py-3 flex items-center justify-between">
         <button
           onClick={() => router.push('/')}
+          data-tour="stock-back"
           className="text-slate-400 hover:text-white text-sm transition-colors flex items-center gap-1 touch:pr-4"
         >
           ← Dashboard
         </button>
-        <span className="text-xs text-slate-600">NEPSE · {symbol}</span>
+        <div className="flex items-center gap-4">
+          <span className="text-xs text-slate-600">NEPSE · {symbol}</span>
+          <TourButton from="stock" />
+        </div>
       </div>
 
       <main className="flex-1 p-6 max-w-[1600px] mx-auto w-full space-y-6">
         {/* Header */}
-        <StockHeader analysis={analysis} />
+        <div data-tour="stock-header">
+          <StockHeader analysis={analysis} />
+        </div>
 
         {/* Unified price chart with range + interval selectors */}
-        <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
+        <div className="bg-slate-900 border border-slate-700 rounded-xl p-5" data-tour="stock-chart">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Price Chart</h2>
           <StockChartPanel symbol={symbol} chartHeight={chartHeight} />
           <ResizeHandle handleProps={chartHandleProps} className="-mb-4" />
@@ -92,20 +99,20 @@ export default function StockPage() {
 
         {/* Row 1: News | Technicals | Signals + Returns — equal thirds, equal height */}
         <div className="grid grid-cols-2 xl:grid-cols-3 gap-6 items-stretch">
-          <div className="flex flex-col col-span-2 xl:col-span-1 max-h-96 xl:max-h-none min-w-0">
+          <div className="flex flex-col col-span-2 xl:col-span-1 max-h-96 xl:max-h-none min-w-0" data-tour="stock-news">
             <StockNewsCard symbol={symbol} />
           </div>
-          <div className="flex flex-col min-w-0">
+          <div className="flex flex-col min-w-0" data-tour="stock-technicals">
             <TechnicalsCard technicals={analysis.technicals} />
           </div>
-          <div className="flex flex-col gap-6 min-w-0">
+          <div className="flex flex-col gap-6 min-w-0" data-tour="stock-technicals">
             <SignalsCard signals={analysis.signals} />
             <ReturnsCard returns={analysis.returns} />
           </div>
         </div>
 
         {/* Row 2: Volume + Volatility + RelPerf */}
-        <div className="grid grid-cols-2 xl:grid-cols-3 gap-6">
+        <div className="grid grid-cols-2 xl:grid-cols-3 gap-6" data-tour="stock-stats">
           <VolumeCard volume={analysis.volume} />
           <VolatilityCard volatility={analysis.volatility} />
           <div className="col-span-2 xl:col-span-1 min-w-0">
@@ -114,10 +121,14 @@ export default function StockPage() {
         </div>
 
         {/* Row 3: AI Analysis + Chat */}
-        <StockAIPanel symbol={symbol} />
+        <div data-tour="stock-ai">
+          <StockAIPanel symbol={symbol} />
+        </div>
 
         {/* Row 4: Floorsheet Timeline — every contract grouped by 10-min windows */}
-        <FloorsheetTimeline symbol={symbol} />
+        <div data-tour="stock-floorsheet">
+          <FloorsheetTimeline symbol={symbol} />
+        </div>
       </main>
     </div>
   )

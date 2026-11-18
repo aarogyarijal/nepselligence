@@ -86,7 +86,7 @@ export default function Dashboard() {
 
         {/* Global Time Range + Interval Selector */}
         <div className="border-b border-slate-800 bg-slate-950 px-6 py-2">
-          <div className="max-w-[1600px] mx-auto flex items-center gap-1 flex-wrap">
+          <div className="max-w-[1600px] mx-auto flex items-center gap-1 flex-wrap" data-tour="range">
             <span className="text-xs text-slate-500 mr-2 font-medium uppercase tracking-wider">Range</span>
             {RANGES.map(r => (
               <button
@@ -127,13 +127,13 @@ export default function Dashboard() {
           {/* ROW 1: NEPSE Index Chart + Sector Performance */}
           {/* Stacked on portrait tablets (the handle sits under the chart it resizes), side by side from lg */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6" style={{ gridTemplateRows: `${chartHeight}px` }}>
-            <div className="lg:col-span-7 xl:col-span-8 min-w-0">
+            <div className="lg:col-span-7 xl:col-span-8 min-w-0" data-tour="index-chart">
               <WidgetShell title="NEPSE Index" className="h-full">
                 <IndexChart isOpen={isOpen} range={activeRange} interval={activeInterval} />
               </WidgetShell>
             </div>
             <ResizeHandle handleProps={chartHandleProps} className="-my-6 lg:hidden" />
-            <div className="lg:col-span-5 xl:col-span-4 min-w-0">
+            <div className="lg:col-span-5 xl:col-span-4 min-w-0" data-tour="sectors">
               <WidgetShell title="Sector Performance" className="h-80 lg:h-full" scrollable>
                 <SectorPerformance isOpen={isOpen} range={activeRange} interval={activeInterval} />
               </WidgetShell>
@@ -143,17 +143,17 @@ export default function Dashboard() {
 
           {/* ROW 2: Top Gainers + Top Losers + Turnover Leaders */}
           <div className="grid grid-cols-2 xl:grid-cols-12 gap-6 mb-6">
-            <div className="xl:col-span-3 min-w-0">
+            <div className="xl:col-span-3 min-w-0" data-tour="movers">
               <WidgetShell title="Top Gainers" className="h-[32rem]" scrollable>
                 <TopGainers isOpen={isOpen} range={activeRange} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
-            <div className="xl:col-span-3 min-w-0">
+            <div className="xl:col-span-3 min-w-0" data-tour="movers">
               <WidgetShell title="Top Losers" className="h-[32rem]" scrollable>
                 <TopLosers isOpen={isOpen} range={activeRange} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
             </div>
-            <div className="col-span-2 xl:col-span-6 min-w-0">
+            <div className="col-span-2 xl:col-span-6 min-w-0" data-tour="turnover">
               <WidgetShell title="Turnover Leaders" className="h-96 xl:h-[32rem]">
                 <TurnoverLeaders isOpen={isOpen} range={activeRange} onSymbolClick={handleSymbolSelect} onFloorsheetClick={setFloorsheetSymbol} />
               </WidgetShell>
@@ -162,23 +162,25 @@ export default function Dashboard() {
 
           {/* ROW 3: Market Breadth + Trade Activity + AI Insights */}
           <div className="grid grid-cols-2 xl:grid-cols-12 gap-6 mb-6">
-            <div className="xl:col-span-3 min-w-0">
+            <div className="xl:col-span-3 min-w-0" data-tour="breadth">
               <WidgetShell title="Market Breadth" className="h-full xl:h-96">
                 <MarketBreadthWidget isOpen={isOpen} range={activeRange} />
               </WidgetShell>
             </div>
-            <div className="xl:col-span-3 min-w-0">
+            <div className="xl:col-span-3 min-w-0" data-tour="trade-activity">
               <TradeActivity />
             </div>
             <div className="col-span-2 xl:col-span-6 min-w-0">
-              <div className="h-96">
+              <div className="h-96" data-tour="ai-insights">
                 <AIPanel isOpen={isOpen} />
               </div>
             </div>
           </div>
 
           {/* Row 4: News Feed */}
-          <NewsFeed />
+          <div data-tour="news">
+            <NewsFeed />
+          </div>
 
         </main>
 

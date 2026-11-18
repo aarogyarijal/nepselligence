@@ -16,6 +16,7 @@ const WAIT_CARD_MS = 400
 const PAD = 8
 const GAP = 16
 const MARGIN = 16
+const CARD_WIDTH = 420
 const LANGS: TourLang[] = ['en', 'ne']
 
 interface Box { left: number; top: number; width: number; height: number }
@@ -68,10 +69,15 @@ function placeCard(lit: Box | null, cw: number, ch: number, vw: number, vh: numb
 }
 
 function scrollToBox(box: Box) {
+  const vw = window.innerWidth
   const vh = window.innerHeight
   const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  // A panel taller than the window is shown from its top; anything else is centred
-  const offset = box.height > vh - 2 * MARGIN ? MARGIN : (vh - box.height) / 2
+  // The card needs room beside the panel; a panel too wide for that gets the card underneath,
+  // so it is shown from the top of the window. So is a panel taller than the window.
+  const sideRoom = CARD_WIDTH + GAP + MARGIN
+  const tooWide = box.left - PAD - sideRoom < 0 && box.left + box.width + PAD + sideRoom > vw
+  const tooTall = box.height > vh - 2 * MARGIN
+  const offset = tooWide || tooTall ? MARGIN + PAD : (vh - box.height) / 2
   window.scrollTo({ top: Math.max(0, window.scrollY + box.top - offset), behavior: reduce ? 'auto' : 'smooth' })
 }
 
@@ -261,12 +267,13 @@ export default function TourOverlay() {
           lang={lang}
           className="fixed z-[9002] bg-slate-900 border border-slate-500 rounded-2xl shadow-2xl p-6 text-slate-100"
           style={{
-            width: 'min(420px, calc(100vw - 32px))',
+            width: `min(${CARD_WIDTH}px, calc(100vw - ${2 * MARGIN}px))`,
             maxHeight: 'calc(100vh - 32px)',
             overflowY: 'auto',
             left: pos.left,
             top: pos.top,
-            visibility: measured ? 'visible' : 'hidden',
+            // Not visibility:hidden — a hidden card cannot take focus
+            opacity: measured ? 1 : 0,
           }}
         >
           <div className="flex items-center justify-between gap-3 mb-4">
