@@ -29,6 +29,7 @@ from .models import (
     DailySectorIndex,
     StockPrice,
 )
+from .memory_parsing import parse_memory_block  # noqa: F401  (re-exported)
 from .prediction_grading import (
     PREDICTION_GRACE_DAYS,
     describe,
@@ -39,89 +40,6 @@ from .prediction_grading import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Parsing: extract <memory> JSON block from Claude's raw response
-# ---------------------------------------------------------------------------
-
-_MEMORY_RE = re.compile(r"<memory>\s*(.*?)\s*</memory>", re.DOTALL)
-_MEMORY_OPEN_RE = re.compile(r"<memory>\s*(.*)", re.DOTALL)
-
-
-def parse_memory_block(raw_text: str) -> tuple[str, dict | None]:
-    """Strip <memory> JSON from insight text. Returns (clean_text, memory_data).
-
-    If no <memory> block is found, returns the original text and None.
-    Handles truncated output where </memory> is missing.
-    """
-    match = _MEMORY_RE.search(raw_text)
-    if match:
-        json_str = match.group(1).strip()
-        clean_text = raw_text[:match.start()].rstrip() + raw_text[match.end():]
-        clean_text = clean_text.strip()
-    else:
-        # Try truncated: <memory> present but no closing tag
-        open_match = _MEMORY_OPEN_RE.search(raw_text)
-        if not open_match:
-            return raw_text, None
-        json_str = open_match.group(1).strip()
-        clean_text = raw_text[:open_match.start()].rstrip()
-
-    try:
-        memory_data = json.loads(json_str)
-    except json.JSONDecodeError:
-        # Try to repair truncated JSON by closing open braces/brackets
-        repaired = _repair_json(json_str)
-        if repaired:
-            memory_data = repaired
-        else:
-            logger.warning("Failed to parse <memory> JSON (even after repair attempt)")
-            return clean_text, None
-
-    return clean_text, memory_data
-
-
-def _repair_json(s: str) -> dict | None:
-    """Attempt to repair truncated JSON by closing open structures."""
-    # Count open braces/brackets
-    opens = 0
-    open_brackets = 0
-    in_string = False
-    escape = False
-    for ch in s:
-        if escape:
-            escape = False
-            continue
-        if ch == '\\':
-            escape = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == '{':
-            opens += 1
-        elif ch == '}':
-            opens -= 1
-        elif ch == '[':
-            open_brackets += 1
-        elif ch == ']':
-            open_brackets -= 1
-
-    if opens <= 0 and open_brackets <= 0:
-        return None  # Not a truncation issue
-
-    # Close any open strings, then brackets/braces
-    if in_string:
-        s += '"'
-    s += ']' * open_brackets + '}' * opens
-
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +289,9 @@ def assemble_memory_context(
     # --- Active Patterns (daily_close and weekly_wrap only) ---
     if insight_type in ("daily_close", "weekly_wrap"):
         patterns = db.query(AIPattern).filter(
-            AIPattern.status.in_(["emerging", "established", "hypothesis"])
+            AIPattern.status.in_(["emerging", "established", "hypothesis"]),
+            # A pattern nobody has seen in a month is not an active one
+            AIPattern.last_observed >= today - timedelta(days=30),
         ).order_by(
             # Prefer established > emerging > hypothesis
             AIPattern.status.desc(),
@@ -966,4 +886,5 @@ Guidelines for memory extraction:
   - Use your graded predictions and track record in memory to decide what kinds of calls to keep making.
 - regime: Always include. Assess the overall market state honestly.
 - patterns: Only when you notice a recurring behavior. Use "reinforce" with the exact pattern "name" if you see a previously identified pattern repeating (pattern_id should always be null).
-- Do NOT fabricate observations — only record what the data shows."""
+- Do NOT fabricate observations — only record what the data shows.
+- Write the JSON compactly: one object per line, no indentation, at most 3 keys in any data_snapshot or reference_values."""

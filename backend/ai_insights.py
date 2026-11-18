@@ -380,11 +380,9 @@ async def generate_insight(db: Session, provider_manager, insight_type: str, opt
         prompt = _build_close_prompt(ctx, day_texts, opts, memory_ctx=memory_ctx)
         model = settings.claude_model_deep
 
-    # Token budget: deep models (daily_close, weekly_wrap) need more for memory extraction
-    if insight_type in (DAILY_CLOSE, WEEKLY_WRAP):
-        max_tokens = max(settings.claude_api_max_tokens, 4000)
-    else:
-        max_tokens = settings.claude_api_max_tokens
+    # Every insight ends with a <memory> JSON block. A response cut off inside
+    # that block loses the whole memory update, so leave room for it.
+    max_tokens = max(settings.claude_api_max_tokens, 4000)
 
     try:
         import anthropic
@@ -666,7 +664,7 @@ async def generate_stock_insight_text(symbol: str, analysis: dict, options: dict
         client = anthropic.Anthropic(api_key=settings.claude_api_key)
         message = client.messages.create(
             model=settings.claude_model_fast,
-            max_tokens=2000,
+            max_tokens=4000,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = message.content[0].text if message.content else ""
