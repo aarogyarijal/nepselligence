@@ -29,7 +29,7 @@ from .models import (
     DailySectorIndex,
     StockPrice,
 )
-from .memory_parsing import parse_memory_block  # noqa: F401  (re-exported)
+from .memory_parsing import parse_memory_block, split_response  # noqa: F401  (re-exported)
 from .prediction_grading import (
     PREDICTION_GRACE_DAYS,
     describe,
@@ -848,32 +848,96 @@ def cleanup_expired_memory(db: Session) -> int:
 # Memory extraction instruction for prompts
 # ---------------------------------------------------------------------------
 
+_NULLABLE_STRING = {"type": ["string", "null"]}
+
+# Memory is returned through a tool call rather than JSON written into the
+# reply: the API hands back tool input as a parsed object, so a malformed or
+# cut-off JSON block can no longer drop a whole memory update.
+MEMORY_TOOL = {
+    "name": "record_memory",
+    "description": (
+        "Record structured memory from the analysis you just wrote: observations, "
+        "testable predictions, the market regime and recurring patterns. Call it "
+        "exactly once, after the written analysis."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "observations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "category": {"type": "string", "enum": ["market_regime", "sector", "stock", "breadth", "anomaly"]},
+                        "subcategory": _NULLABLE_STRING,
+                        "symbol": _NULLABLE_STRING,
+                        "sector": _NULLABLE_STRING,
+                        "text": {"type": "string", "description": "One-sentence factual observation with specific numbers"},
+                        "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+                        "data_snapshot": {"type": "object", "description": "Up to 3 key metrics"},
+                    },
+                    "required": ["category", "text", "confidence"],
+                },
+            },
+            "predictions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "category": {"type": "string", "enum": ["price_direction", "sector_rotation", "breakout", "support_test"]},
+                        "symbol": _NULLABLE_STRING,
+                        "sector": _NULLABLE_STRING,
+                        "text": {"type": "string", "description": "Specific forward-looking statement"},
+                        "conditions": {
+                            "type": "object",
+                            "description": "What will be TRUE on the target date if the prediction is right",
+                            "properties": {
+                                "metric": {"type": "string", "enum": ["price", "nepse_index", "change_pct"]},
+                                "symbol": {"type": ["string", "null"], "description": "Stock symbol, or null for the NEPSE index"},
+                                "direction": {"type": "string", "enum": ["above", "below"]},
+                                "threshold": {"type": "number"},
+                            },
+                            "required": ["metric", "symbol", "direction", "threshold"],
+                        },
+                        "reference_values": {"type": "object", "description": "Up to 3 values at prediction time"},
+                        "target_days": {"type": "integer", "description": "Calendar days from today, 1 to 30"},
+                    },
+                    "required": ["category", "text", "conditions", "target_days"],
+                },
+            },
+            "regime": {
+                "type": ["object", "null"],
+                "properties": {
+                    "trend": {"type": "string", "enum": ["bullish", "bearish", "sideways", "transitioning"]},
+                    "trend_strength": {"type": "string", "enum": ["weak", "moderate", "strong"]},
+                    "volatility": {"type": "string", "enum": ["low", "normal", "elevated", "extreme"]},
+                    "breadth_health": {"type": "string", "enum": ["healthy", "narrowing", "weak", "divergent"]},
+                    "leading_sectors": {"type": "array", "items": {"type": "string"}},
+                    "lagging_sectors": {"type": "array", "items": {"type": "string"}},
+                    "key_levels": {"type": "object", "description": "e.g. {\"support\": 2380, \"resistance\": 2500}"},
+                },
+            },
+            "patterns": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Short descriptive name"},
+                        "description": {"type": "string"},
+                        "category": {"type": "string", "enum": ["sector_rotation", "momentum", "seasonal", "volume", "correlation"]},
+                        "action": {"type": "string", "enum": ["new", "reinforce"]},
+                    },
+                    "required": ["name", "action"],
+                },
+            },
+        },
+        "required": ["observations", "predictions"],
+    },
+}
+
 MEMORY_EXTRACTION_INSTRUCTION = """
 
-After your analysis, append a JSON block wrapped in <memory> tags containing your structured observations from this analysis. This is critical for building market understanding over time.
-
-<memory>
-{
-  "observations": [
-    {"category": "market_regime|sector|stock|breadth|anomaly", "subcategory": "optional_detail", "symbol": null, "sector": null, "text": "One-sentence factual observation with specific numbers", "confidence": "low|medium|high", "data_snapshot": {"key_metric": value}}
-  ],
-  "predictions": [
-    {"category": "price_direction|sector_rotation|breakout|support_test", "symbol": null, "sector": null, "text": "Specific forward-looking statement", "conditions": {"metric": "price|nepse_index|change_pct", "symbol": "SYMBOL or null for the NEPSE index", "direction": "above|below", "threshold": 1280}, "reference_values": {"price": 1250, "rsi": 72}, "target_days": 5}
-  ],
-  "regime": {
-    "trend": "bullish|bearish|sideways|transitioning",
-    "trend_strength": "weak|moderate|strong",
-    "volatility": "low|normal|elevated|extreme",
-    "breadth_health": "healthy|narrowing|weak|divergent",
-    "leading_sectors": ["Banking", "Hydropower"],
-    "lagging_sectors": ["Hotels", "Trading"],
-    "key_levels": {"support": 2380, "resistance": 2500}
-  },
-  "patterns": [
-    {"name": "Short descriptive name", "description": "Full pattern hypothesis", "category": "sector_rotation|momentum|seasonal|volume|correlation", "action": "new|reinforce", "pattern_id": null}
-  ]
-}
-</memory>
+After your written analysis, call the record_memory tool exactly once to store what you learned. This is how your market understanding builds over time. Write the analysis as plain text first; do not put JSON or tool arguments in the text.
 
 Guidelines for memory extraction:
 - observations: 2-5 per analysis. Be specific with numbers. Focus on what changed or stands out.
@@ -887,4 +951,4 @@ Guidelines for memory extraction:
 - regime: Always include. Assess the overall market state honestly.
 - patterns: Only when you notice a recurring behavior. Use "reinforce" with the exact pattern "name" if you see a previously identified pattern repeating (pattern_id should always be null).
 - Do NOT fabricate observations — only record what the data shows.
-- Write the JSON compactly: one object per line, no indentation, at most 3 keys in any data_snapshot or reference_values."""
+- Keep data_snapshot and reference_values to at most 3 keys each."""

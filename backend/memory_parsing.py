@@ -100,3 +100,29 @@ def _repair_json(s: str) -> dict | None:
             continue
         return data if isinstance(data, dict) else None
     return None
+
+
+MEMORY_TOOL_NAME = "record_memory"
+
+
+def split_response(blocks) -> tuple[str, dict | None]:
+    """Split a model response into (analysis text, memory data).
+
+    Memory arrives as the input of a record_memory tool call, which the API
+    returns as an already-parsed object, so it cannot be malformed JSON. A
+    <memory> block written into the text is still accepted as a fallback.
+    """
+    text = "\n".join(
+        b.text for b in blocks if getattr(b, "type", None) == "text" and b.text
+    ).strip()
+    memory = next(
+        (
+            b.input for b in blocks
+            if getattr(b, "type", None) == "tool_use"
+            and b.name == MEMORY_TOOL_NAME
+            and isinstance(b.input, dict)
+        ),
+        None,
+    )
+    clean_text, inline_memory = parse_memory_block(text)
+    return clean_text, memory if memory is not None else inline_memory

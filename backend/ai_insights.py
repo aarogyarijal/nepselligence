@@ -14,7 +14,8 @@ from sqlalchemy import text as sql_text
 from .config import settings
 from .models import AIInsight, MarketSummary, DailySectorIndex, DailyMarketBreadth, NewsArticle
 from .ai_memory import (
-    parse_memory_block,
+    split_response,
+    MEMORY_TOOL,
     write_memory,
     assemble_memory_context,
     resolve_pending_predictions,
@@ -380,8 +381,7 @@ async def generate_insight(db: Session, provider_manager, insight_type: str, opt
         prompt = _build_close_prompt(ctx, day_texts, opts, memory_ctx=memory_ctx)
         model = settings.claude_model_deep
 
-    # Every insight ends with a <memory> JSON block. A response cut off inside
-    # that block loses the whole memory update, so leave room for it.
+    # Every insight ends with a record_memory tool call; leave room for it.
     max_tokens = max(settings.claude_api_max_tokens, 4000)
 
     try:
@@ -390,17 +390,14 @@ async def generate_insight(db: Session, provider_manager, insight_type: str, opt
         message = client.messages.create(
             model=model,
             max_tokens=max_tokens,
+            tools=[MEMORY_TOOL],
             messages=[{"role": "user", "content": prompt}],
         )
-        raw_text = message.content[0].text if message.content else ""
-        raw_text = _strip_code_fences(raw_text)
-
-        if not raw_text:
-            logger.warning("Claude returned empty insight, skipping")
-            return
-
-        # Parse and strip memory block from the response
-        insight_text, memory_data = parse_memory_block(raw_text)
+        # Analysis comes back as text, memory as a record_memory tool call
+        insight_text, memory_data = split_response(message.content)
+        insight_text = _strip_code_fences(insight_text)
+        if memory_data is None:
+            logger.warning(f"Insight returned no memory (stop_reason={message.stop_reason})")
 
         if not insight_text:
             logger.warning("Insight text empty after memory parsing, skipping")
@@ -587,13 +584,7 @@ Write a concise analysis in plain text (no markdown, no code fences) with exactl
 
 Under 200 words for the analysis sections. Be specific with price levels and percentages. Reference any relevant news if it affects the outlook.
 
-After your 3-section analysis, you MUST append a memory block in this exact format:
-
-<memory>
-{{"observations": [{{"category": "stock", "subcategory": "...", "symbol": "{symbol}", "sector": null, "text": "one-sentence observation", "confidence": "medium"}}], "predictions": [{{"category": "price_direction", "symbol": "{symbol}", "text": "prediction", "conditions": {{}}, "reference_values": {{}}, "target_days": 5}}], "regime": null, "patterns": []}}
-</memory>
-
-Include 1-2 observations and 0-1 predictions. This memory block is REQUIRED."""
+After your 3-section analysis, call the record_memory tool exactly once with 1-2 observations about {symbol} (category "stock") and 0-1 predictions. A prediction is graded by code on its target date, so its conditions must state what will be true if you are right: metric "price" (closing price) or "change_pct" (percent change from today), symbol "{symbol}", direction "above" or "below", a numeric threshold, and target_days from 1 to 30. If you have no testable view, record no prediction. Do not put JSON in the text."""
 
 
 def _build_stock_system_prompt(symbol: str, analysis: dict, news: list | None = None, memory_ctx: str = "") -> str:
@@ -665,14 +656,12 @@ async def generate_stock_insight_text(symbol: str, analysis: dict, options: dict
         message = client.messages.create(
             model=settings.claude_model_fast,
             max_tokens=4000,
+            tools=[MEMORY_TOOL],
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = message.content[0].text if message.content else ""
-        logger.info(f"Stock insight raw response: stop={message.stop_reason}, len={len(raw)}, has_memory_tag={'<memory>' in raw}")
-        raw = _strip_code_fences(raw)
-
-        # Parse and write memory
-        clean_text, memory_data = parse_memory_block(raw)
+        clean_text, memory_data = split_response(message.content)
+        clean_text = _strip_code_fences(clean_text)
+        logger.info(f"Stock insight response: stop={message.stop_reason}, len={len(clean_text)}, has_memory={memory_data is not None}")
 
         extra = {"model": settings.claude_model_fast, "options": options}
         if memory_data:
