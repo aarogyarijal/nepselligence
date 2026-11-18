@@ -30,13 +30,21 @@ services:
   nepseapi:
     image: surajrimal/nepseapi:latest
     container_name: nepselligence-nepseapi
+    environment:
+      # The nepse library signs graph POSTs with date.today().day. In a UTC
+      # container that is the wrong day from 00:00 to 05:45 NPT, NEPSE answers
+      # 401, the library retries until RecursionError and its token manager
+      # deadlocks, hanging every endpoint until the container is restarted.
+      TZ: Asia/Kathmandu
     ports:
       - "8000:8000"  # REST API
       - "5555:5555"  # WebSocket
       - "9000:9000"  # MCP server
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/IsNepseOpen"]
-      interval: 30s
+      # The image has no curl. IsNepseOpen (not /health) because it needs a
+      # token, so it fails when the token manager is deadlocked.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/IsNepseOpen', timeout=8)"]
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 10s
