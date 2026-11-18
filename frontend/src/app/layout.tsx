@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import TourProvider from '@/components/tour/TourProvider'
 
 export const metadata: Metadata = {
   title: 'NEPSE AI Dashboard',
@@ -14,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-slate-950 text-slate-100">
-        {children}
+        <TourProvider>{children}</TourProvider>
       </body>
     </html>
   )
