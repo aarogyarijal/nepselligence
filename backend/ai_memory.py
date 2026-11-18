@@ -118,6 +118,10 @@ def write_memory(
         if not name:
             continue
         existing = patterns_by_name.get(name.lower()) or _find_pattern(db, name)
+        if existing is None and pat.get("action") == "reinforce":
+            # Reinforcing a name that does not exist would mint a near-duplicate
+            logger.info(f"Ignored reinforce of unknown pattern {name!r}")
+            continue
         if existing:
             # "new" under a name that already exists is a repeat sighting
             existing.evidence_count = (existing.evidence_count or 0) + 1
@@ -329,8 +333,8 @@ def assemble_memory_context(
             pred_lines.append(f'- "{p.prediction_text}" (made {made_date}) -> {label}')
         parts.append("[PENDING PREDICTIONS]\n" + "\n".join(pred_lines))
 
-    # --- Active Patterns (daily_close and weekly_wrap only) ---
-    if insight_type in ("daily_close", "weekly_wrap"):
+    # --- Active Patterns (every market insight, so names can be reused and tested) ---
+    if insight_type in ("market_open", "hourly", "daily_close", "weekly_wrap"):
         rank = {"established": 0, "emerging": 1, "hypothesis": 2}
         patterns = db.query(AIPattern).filter(
             AIPattern.status.in_(list(rank)),
@@ -1009,7 +1013,7 @@ Guidelines for memory extraction:
   - You are also scored against a forecaster who assumes nothing changes. A condition that is already true today earns no credit, so call moves, not the status quo. If you have no real view, make no prediction.
   - Use your graded predictions and track record in memory to decide what kinds of calls to keep making.
 - regime: Always include. Assess the overall market state honestly.
-- patterns: Only when you notice a recurring behavior. Use "reinforce" with the exact pattern "name" if you see a previously identified pattern repeating.
+- patterns: Only when you notice a recurring behavior. Use "reinforce" only with the exact "name" of a pattern listed under ACTIVE PATTERNS in your memory; a reinforce of any other name is ignored. Use "new" for a genuinely new pattern, not a rewording of an active one.
   - Seeing a pattern again does not prove it. A pattern is promoted from hypothesis to emerging to established only by predictions that test it, and it is thrown out if those keep failing.
   - To test a pattern, make a prediction of what it implies will happen next and set that prediction's "pattern" to the pattern's exact name. Prefer testing an active pattern from memory over inventing a new one.
 - Do NOT fabricate observations — only record what the data shows.
