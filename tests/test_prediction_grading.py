@@ -6,6 +6,8 @@ from backend.prediction_grading import (
     describe,
     grade,
     normalize_condition,
+    pattern_status,
+    pattern_test_outcome,
     summarize,
     valid_target_days,
 )
@@ -159,6 +161,55 @@ class TestSummarize(unittest.TestCase):
         self.assertEqual(card["total"], 2)
         self.assertEqual(card["hit_rate_pct"], 25.0)
         self.assertIsNone(card["edge_pct"])
+
+
+class TestPatternTestOutcome(unittest.TestCase):
+    def test_a_call_the_baseline_missed_confirms_the_pattern(self):
+        self.assertIs(pattern_test_outcome("confirmed", False), True)
+
+    def test_a_call_that_needed_no_pattern_is_not_evidence(self):
+        self.assertIsNone(pattern_test_outcome("confirmed", True))
+
+    def test_unknown_baseline_still_counts(self):
+        self.assertIs(pattern_test_outcome("confirmed", None), True)
+
+    def test_a_wrong_call_counts_against_the_pattern(self):
+        self.assertIs(pattern_test_outcome("invalidated", True), False)
+        self.assertIs(pattern_test_outcome("invalidated", False), False)
+
+    def test_ungraded_predictions_say_nothing(self):
+        for status in ("pending", "expired", "partially_confirmed"):
+            self.assertIsNone(pattern_test_outcome(status, False), status)
+
+
+class TestPatternStatus(unittest.TestCase):
+    def test_stays_a_hypothesis_until_tested_three_times(self):
+        self.assertEqual(pattern_status(0, 0), "hypothesis")
+        self.assertEqual(pattern_status(2, 2), "hypothesis")
+
+    def test_emerging_once_it_holds_up(self):
+        self.assertEqual(pattern_status(2, 3), "emerging")
+        self.assertEqual(pattern_status(3, 5), "emerging")
+        self.assertEqual(pattern_status(7, 7), "emerging")
+
+    def test_established_needs_eight_tests(self):
+        self.assertEqual(pattern_status(5, 8), "established")
+        self.assertEqual(pattern_status(8, 8), "established")
+
+    def test_middling_record_stays_a_hypothesis(self):
+        self.assertEqual(pattern_status(1, 3), "hypothesis")
+        self.assertEqual(pattern_status(4, 8), "hypothesis")
+
+    def test_thrown_out_when_it_keeps_failing(self):
+        self.assertEqual(pattern_status(2, 5), "invalidated")
+        self.assertEqual(pattern_status(0, 6), "invalidated")
+
+    def test_not_thrown_out_on_too_few_tests(self):
+        self.assertEqual(pattern_status(0, 4), "hypothesis")
+
+    def test_can_be_demoted(self):
+        self.assertEqual(pattern_status(6, 8), "established")
+        self.assertEqual(pattern_status(6, 11), "hypothesis")
 
 
 if __name__ == "__main__":

@@ -110,6 +110,17 @@ async def lifespan(app: FastAPI):
     logger.info("Creating database tables...")
     Base.metadata.create_all(bind=engine)
 
+    # create_all never alters existing tables, so add columns introduced later.
+    with engine.connect() as conn:
+        from sqlalchemy import text as sql_text
+        conn.execute(sql_text(
+            "ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS pattern_id INTEGER REFERENCES ai_patterns(id)"
+        ))
+        conn.execute(sql_text(
+            "ALTER TABLE ai_patterns ADD COLUMN IF NOT EXISTS test_count INTEGER DEFAULT 0"
+        ))
+        conn.commit()
+
     # Migrate floorsheet table if it uses the old schema (buyer/seller columns, no contract_id)
     with engine.connect() as conn:
         from sqlalchemy import text as sql_text
@@ -484,7 +495,8 @@ async def get_ai_patterns(status: str = None):
                 "description": p.description,
                 "category": p.category,
                 "evidence_count": p.evidence_count,
-                "confirmation_count": p.confirmation_count,
+                "test_count": p.test_count or 0,
+                "confirmation_count": p.confirmation_count or 0,
                 "last_observed": str(p.last_observed) if p.last_observed else None,
                 "last_confirmed": str(p.last_confirmed) if p.last_confirmed else None,
                 "status": p.status,

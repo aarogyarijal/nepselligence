@@ -548,8 +548,10 @@ export default function AIPanel({ isOpen }: AIPanelProps) {
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed mb-2">{p.description}</p>
                 <div className="flex items-center gap-3 text-[10px] text-slate-600">
-                  <span>Evidence: {p.evidence_count}</span>
-                  <span>Confirmed: {p.confirmation_count}</span>
+                  <span title="Times the AI reported seeing this pattern">Seen: {p.evidence_count}</span>
+                  <span title="Predictions based on this pattern that were graded, and how many came true when a no-change forecast would have missed">
+                    {p.test_count ? `Tests: ${p.confirmation_count}/${p.test_count} right` : 'Untested'}
+                  </span>
                   <span>{p.category.replace('_', ' ')}</span>
                   {p.last_observed && <span>Last seen: {p.last_observed}</span>}
                 </div>

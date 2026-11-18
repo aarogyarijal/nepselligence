@@ -35,6 +35,8 @@ from .prediction_grading import (
     describe,
     grade,
     normalize_condition,
+    pattern_status,
+    pattern_test_outcome,
     summarize,
     valid_target_days,
 )
@@ -45,6 +47,41 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Write: unpack memory JSON into database tables
 # ---------------------------------------------------------------------------
+
+def _find_pattern(db: Session, name: str) -> AIPattern | None:
+    """Look a pattern up by name, ignoring case. Retired patterns are not reused."""
+    return db.query(AIPattern).filter(
+        func.lower(AIPattern.pattern_name) == name.strip().lower(),
+        AIPattern.status != "invalidated",
+    ).order_by(AIPattern.id.asc()).first()
+
+
+def update_pattern_from_tests(db: Session, pattern: AIPattern) -> None:
+    """Recompute a pattern's track record and status from the graded predictions linked to it."""
+    db.flush()
+    graded = db.query(AIPrediction).filter(
+        AIPrediction.pattern_id == pattern.id,
+        AIPrediction.status.in_(["confirmed", "invalidated"]),
+    ).all()
+    outcomes = [
+        (p, pattern_test_outcome(p.status, (p.outcome_values or {}).get("baseline_correct")))
+        for p in graded
+    ]
+    wins = [p for p, outcome in outcomes if outcome is True]
+    tests = sum(1 for _, outcome in outcomes if outcome is not None)
+
+    pattern.test_count = tests
+    pattern.confirmation_count = len(wins)
+    if wins:
+        pattern.last_confirmed = max(p.target_date for p in wins)
+    new_status = pattern_status(len(wins), tests)
+    if new_status != pattern.status:
+        logger.info(
+            f"Pattern {pattern.pattern_name!r}: {pattern.status} -> {new_status} "
+            f"({len(wins)}/{tests} tests right)"
+        )
+        pattern.status = new_status
+
 
 def write_memory(
     db: Session,
@@ -74,6 +111,33 @@ def write_memory(
         if row.observation:
             db.add(row)
 
+    # --- Patterns (before predictions, so predictions can link to them) ---
+    patterns_by_name: dict[str, AIPattern] = {}
+    for pat in memory_data.get("patterns") or []:
+        name = (pat.get("name") or "").strip()
+        if not name:
+            continue
+        existing = patterns_by_name.get(name.lower()) or _find_pattern(db, name)
+        if existing:
+            # "new" under a name that already exists is a repeat sighting
+            existing.evidence_count = (existing.evidence_count or 0) + 1
+            existing.last_observed = observation_date
+        else:
+            existing = AIPattern(
+                pattern_name=name,
+                description=pat.get("description") or "",
+                category=pat.get("category") or "momentum",
+                conditions=pat.get("conditions"),
+                evidence_count=1,
+                test_count=0,
+                confirmation_count=0,
+                last_observed=observation_date,
+                status="hypothesis",
+            )
+            db.add(existing)
+        patterns_by_name[name.lower()] = existing
+    db.flush()  # give new patterns ids
+
     # --- Predictions ---
     # Only predictions that can be graded in code are kept: an untestable
     # prediction can never feed the scorecard, so it teaches nothing.
@@ -83,8 +147,14 @@ def write_memory(
         if not pred.get("text") or condition is None or target_days is None:
             logger.info(f"Dropped ungradable prediction: {str(pred.get('text'))[:80]!r}")
             continue
+        # A prediction made on the strength of a pattern is a test of it
+        pattern_name = (pred.get("pattern") or "").strip()
+        pattern = None
+        if pattern_name:
+            pattern = patterns_by_name.get(pattern_name.lower()) or _find_pattern(db, pattern_name)
         db.add(AIPrediction(
             source_insight_id=insight_id,
+            pattern_id=pattern.id if pattern else None,
             prediction_date=observation_date,
             target_date=observation_date + timedelta(days=target_days),
             category=pred.get("category", "price_direction"),
@@ -140,33 +210,6 @@ def write_memory(
                 key_levels=regime.get("key_levels"),
                 regime_duration_days=duration,
                 notes=regime.get("notes"),
-            )
-            db.add(row)
-
-    # --- Patterns ---
-    for pat in memory_data.get("patterns") or []:
-        action = pat.get("action", "new")
-        if action == "reinforce" and (pat.get("pattern_id") or pat.get("name")):
-            # Look up by integer ID or by name (AI may generate string slugs)
-            pid = pat.get("pattern_id")
-            if isinstance(pid, int):
-                existing = db.query(AIPattern).filter(AIPattern.id == pid).first()
-            else:
-                # Fall back to name-based lookup
-                lookup_name = pat.get("name") or str(pid)
-                existing = db.query(AIPattern).filter(AIPattern.pattern_name == lookup_name).first()
-            if existing:
-                existing.evidence_count = (existing.evidence_count or 0) + 1
-                existing.last_observed = observation_date
-        elif action == "new" and pat.get("name"):
-            row = AIPattern(
-                pattern_name=pat["name"],
-                description=pat.get("description", ""),
-                category=pat.get("category", "momentum"),
-                conditions=pat.get("conditions"),
-                evidence_count=1,
-                last_observed=observation_date,
-                status="hypothesis",
             )
             db.add(row)
 
@@ -288,21 +331,28 @@ def assemble_memory_context(
 
     # --- Active Patterns (daily_close and weekly_wrap only) ---
     if insight_type in ("daily_close", "weekly_wrap"):
+        rank = {"established": 0, "emerging": 1, "hypothesis": 2}
         patterns = db.query(AIPattern).filter(
-            AIPattern.status.in_(["emerging", "established", "hypothesis"]),
+            AIPattern.status.in_(list(rank)),
             # A pattern nobody has seen in a month is not an active one
             AIPattern.last_observed >= today - timedelta(days=30),
-        ).order_by(
-            # Prefer established > emerging > hypothesis
-            AIPattern.status.desc(),
-            AIPattern.evidence_count.desc(),
-        ).limit(5).all()
+        ).all()
+        patterns.sort(key=lambda p: (rank[p.status], -(p.test_count or 0), -(p.evidence_count or 0)))
         if patterns:
             pat_lines = []
-            for p in patterns:
-                conf_rate = f"{p.confirmation_count}/{p.evidence_count}" if p.evidence_count else "0/0"
-                pat_lines.append(f'- "{p.pattern_name}" ({p.status}, confirmed {conf_rate})')
-            parts.append("[ACTIVE PATTERNS]\n" + "\n".join(pat_lines))
+            for p in patterns[:5]:
+                tests = p.test_count or 0
+                record = (
+                    f"called {p.confirmation_count or 0} of {tests} tests right"
+                    if tests else "untested"
+                )
+                pat_lines.append(
+                    f'- "{p.pattern_name}" ({p.status}; seen {p.evidence_count or 1}x; {record})'
+                )
+            parts.append(
+                "[ACTIVE PATTERNS]\n" + "\n".join(pat_lines)
+                + "\nA pattern is only tested when you attach its exact name to a prediction."
+            )
 
     # --- Graded outcomes of past predictions (the feedback signal) ---
     if insight_type in ("market_open", "daily_close", "weekly_wrap"):
@@ -497,6 +547,7 @@ async def resolve_pending_predictions(db: Session, provider_manager=None) -> lis
     ).order_by(AIPrediction.prediction_date.asc()).all()
 
     results = []
+    touched_patterns: set[int] = set()
     for pred in due:
         if pred.target_date < stale_before:
             pred.status = "expired"
@@ -524,6 +575,11 @@ async def resolve_pending_predictions(db: Session, provider_manager=None) -> lis
             "status": result["status"],
             "explanation": result["explanation"],
         })
+        if pred.pattern_id:
+            touched_patterns.add(pred.pattern_id)
+
+    for pattern in db.query(AIPattern).filter(AIPattern.id.in_(touched_patterns)).all() if touched_patterns else []:
+        update_pattern_from_tests(db, pattern)
 
     try:
         db.commit()
@@ -901,6 +957,10 @@ MEMORY_TOOL = {
                         },
                         "reference_values": {"type": "object", "description": "Up to 3 values at prediction time"},
                         "target_days": {"type": "integer", "description": "Calendar days from today, 1 to 30"},
+                        "pattern": {
+                            "type": ["string", "null"],
+                            "description": "Exact name of the pattern this prediction is based on, if any. The graded result then counts as a test of that pattern.",
+                        },
                     },
                     "required": ["category", "text", "conditions", "target_days"],
                 },
@@ -949,6 +1009,8 @@ Guidelines for memory extraction:
   - You are also scored against a forecaster who assumes nothing changes. A condition that is already true today earns no credit, so call moves, not the status quo. If you have no real view, make no prediction.
   - Use your graded predictions and track record in memory to decide what kinds of calls to keep making.
 - regime: Always include. Assess the overall market state honestly.
-- patterns: Only when you notice a recurring behavior. Use "reinforce" with the exact pattern "name" if you see a previously identified pattern repeating (pattern_id should always be null).
+- patterns: Only when you notice a recurring behavior. Use "reinforce" with the exact pattern "name" if you see a previously identified pattern repeating.
+  - Seeing a pattern again does not prove it. A pattern is promoted from hypothesis to emerging to established only by predictions that test it, and it is thrown out if those keep failing.
+  - To test a pattern, make a prediction of what it implies will happen next and set that prediction's "pattern" to the pattern's exact name. Prefer testing an active pattern from memory over inventing a new one.
 - Do NOT fabricate observations — only record what the data shows.
 - Keep data_snapshot and reference_values to at most 3 keys each."""

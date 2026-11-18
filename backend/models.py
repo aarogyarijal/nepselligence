@@ -235,6 +235,7 @@ class AIPrediction(Base):
     id = Column(Integer, primary_key=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     source_insight_id = Column(Integer, ForeignKey("ai_insights.id"), nullable=True)
+    pattern_id = Column(Integer, ForeignKey("ai_patterns.id"), nullable=True)  # pattern this prediction tests
     prediction_date = Column(Date, nullable=False)
     target_date = Column(Date)                           # When it should resolve (NULL = open-ended)
     category = Column(String(30), nullable=False)        # price_direction, sector_rotation, breakout, support_test
@@ -266,8 +267,9 @@ class AIPattern(Base):
     description = Column(Text, nullable=False)
     category = Column(String(30), nullable=False)        # sector_rotation, momentum, seasonal, volume, correlation
     conditions = Column(JSONB)
-    evidence_count = Column(Integer, default=1)
-    confirmation_count = Column(Integer, default=0)
+    evidence_count = Column(Integer, default=1)       # times the AI reported seeing it
+    test_count = Column(Integer, default=0)           # graded predictions that tested it
+    confirmation_count = Column(Integer, default=0)   # of those, how many it called right
     last_observed = Column(Date)
     last_confirmed = Column(Date)
     status = Column(String(15), default="hypothesis")    # hypothesis, emerging, established, invalidated

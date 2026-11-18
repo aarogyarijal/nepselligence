@@ -174,3 +174,41 @@ def summarize(records: list[dict]) -> dict:
             by_category[cat] = cat_card
     card["by_category"] = by_category
     return card
+
+
+# ---------------------------------------------------------------------------
+# Patterns: a pattern earns its status from the predictions made on it
+# ---------------------------------------------------------------------------
+
+PATTERN_MIN_TESTS = 3          # tests before a pattern can leave "hypothesis"
+PATTERN_ESTABLISHED_TESTS = 8  # tests before it can be called "established"
+PATTERN_PROMOTE_RATE = 0.6     # share of tests it must get right to be promoted
+PATTERN_RETIRE_TESTS = 5       # tests before it can be thrown out
+PATTERN_RETIRE_RATE = 0.4      # at or below this share right, it is invalidated
+
+
+def pattern_test_outcome(status: str, baseline_correct: bool | None) -> bool | None:
+    """What a graded prediction says about the pattern it was based on.
+
+    True = the pattern called it, False = the pattern got it wrong,
+    None = no information. A prediction that came true but that the
+    no-change baseline also got right would have come true with or without
+    the pattern, so it is not counted as a confirmation.
+    """
+    if status == "confirmed":
+        return None if baseline_correct is True else True
+    if status == "invalidated":
+        return False
+    return None
+
+
+def pattern_status(confirmations: int, tests: int) -> str:
+    """Status a pattern has earned from its track record."""
+    if tests < PATTERN_MIN_TESTS:
+        return "hypothesis"
+    rate = confirmations / tests
+    if tests >= PATTERN_RETIRE_TESTS and rate <= PATTERN_RETIRE_RATE:
+        return "invalidated"
+    if rate >= PATTERN_PROMOTE_RATE:
+        return "established" if tests >= PATTERN_ESTABLISHED_TESTS else "emerging"
+    return "hypothesis"

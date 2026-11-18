@@ -277,7 +277,11 @@ export interface AIPattern {
   pattern_name: string
   description: string
   category: string
+  /** Times the AI reported seeing the pattern. */
   evidence_count: number
+  /** Graded predictions that tested the pattern. */
+  test_count?: number
+  /** Of those tests, how many the pattern called right. */
   confirmation_count: number
   last_observed: string | null
   last_confirmed: string | null
