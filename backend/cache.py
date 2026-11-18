@@ -5,10 +5,9 @@ All cached values include a `meta` dict with source and asOf timestamp.
 """
 
 import threading
-import zoneinfo
 from datetime import datetime, timezone
 
-NPT = zoneinfo.ZoneInfo("Asia/Kathmandu")
+from .timeutil import NPT
 from typing import Any
 
 try:

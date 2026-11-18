@@ -4,9 +4,8 @@ import json
 import logging
 import re
 from datetime import datetime, timezone, timedelta, date
-import zoneinfo
 
-NPT = zoneinfo.ZoneInfo("Asia/Kathmandu")
+from .timeutil import NPT, npt_today, npt_day_start
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text as sql_text
@@ -79,7 +78,7 @@ def _gather_market_context(db: Session) -> dict:
         ]
 
     # Today's sector performance
-    today = date.today()
+    today = npt_today()
     sectors = db.query(DailySectorIndex).filter(DailySectorIndex.date == today).all()
     if sectors:
         ctx["sectors"] = [
@@ -374,7 +373,7 @@ async def generate_insight(db: Session, provider_manager, insight_type: str, opt
         model = settings.claude_model_deep
     else:  # DAILY_CLOSE (default)
         today_insights = db.query(AIInsight).filter(
-            AIInsight.generated_at >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0),
+            AIInsight.generated_at >= npt_day_start(),
             AIInsight.insight_type.in_([MARKET_OPEN, HOURLY]),
         ).order_by(AIInsight.generated_at.asc()).all()
         day_texts = [i.insight_text for i in today_insights]
@@ -424,7 +423,7 @@ async def generate_insight(db: Session, provider_manager, insight_type: str, opt
         # Write structured memory to tables
         if memory_data:
             try:
-                write_memory(db, insight.id, memory_data, date.today())
+                write_memory(db, insight.id, memory_data, npt_today())
             except Exception as e:
                 logger.warning(f"Memory write failed (non-fatal): {e}")
                 db.rollback()
@@ -679,7 +678,7 @@ async def generate_stock_insight_text(symbol: str, analysis: dict, options: dict
             db.flush()
             if memory_data:
                 try:
-                    write_memory(db, insight.id, memory_data, date.today())
+                    write_memory(db, insight.id, memory_data, npt_today())
                 except Exception as e:
                     logger.warning(f"Stock memory write failed (non-fatal): {e}")
                     db.rollback()
